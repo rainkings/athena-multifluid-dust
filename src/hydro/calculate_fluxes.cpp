@@ -60,6 +60,29 @@ void Hydro::CalculateFluxes(AthenaArray<Real> &w, FaceField &b,
   AthenaArray<Real> &flux_fc = scr1_nkji_;
   AthenaArray<Real> &laplacian_all_fc = scr2_nkji_;
 
+  int dk     = NGHOST;
+  int dj     = NGHOST;
+  if (pmb->block_size.nx3 == 1) dk = 0;
+  if (pmb->block_size.nx2 == 1) dj = 0;
+  kl = ks - dk;     ku = ke + dk;
+  jl = js - dj;     ju = je + dj;
+  il = is - NGHOST; iu = ie + NGHOST;
+  
+  // calculate vapor concentration (Yu, 2025-11-18)
+  if (N_Z > 0){
+    for (int n=0; n<NDUSTFLUIDS; ++n){
+      int rho_id = 4*n;
+      for (int k=kl; k<=ku; ++k) {
+        for (int j=jl; j<=ju; ++j) {
+#pragma omp simd
+          for (int i=il; i<=iu; ++i) {
+            r_(n,k,j,i) = pmb->pdustfluids->df_w(rho_id,k,j,i)/w(IDN,k,j,i);
+          }
+        }
+      }
+    }
+  }
+
   //--------------------------------------------------------------------------------------
   // i-direction
 
@@ -82,13 +105,23 @@ void Hydro::CalculateFluxes(AthenaArray<Real> &w, FaceField &b,
         pmb->precon->DonorCellX1(k, j, is-1, ie+1, w, bcc, wl_, wr_);
       } else if (order == 2) {
         pmb->precon->PiecewiseLinearX1(k, j, is-1, ie+1, w, bcc, wl_, wr_);
+        if(N_Z > 0) // vapor concentration reconstruction (Yu, 2025-11-18)
+          pmb->precon->PiecewiseLinearX1(k, j, is-1, ie+1, r_, rl_, rr_);
       } else {
         pmb->precon->PiecewiseParabolicX1(k, j, is-1, ie+1, w, bcc, wl_, wr_);
+        if(N_Z > 0) // vapor concentration reconstruction (Yu, 2025-11-18)
+          pmb->precon->PiecewiseParabolicX1(k, j, is-1, ie+1, r_, rl_, rr_);
       }
 
       pmb->pcoord->CenterWidth1(k, j, is, ie+1, dxw_);
 #if !MAGNETIC_FIELDS_ENABLED  // Hydro:
       RiemannSolver(k, j, is, ie+1, IVX, wl_, wr_, x1flux, dxw_);
+      if(FLX_COR) {
+        // Only apply flux correction at outer boundary of simulation domain
+        if (pmb->pbval->block_bcs[BoundaryFace::outer_x1] == BoundaryFlag::user) {
+          x1flux(IDN,k,j,ie+1) = inflx_x1(k,j,0); // inflx of hydro
+        }
+      }
 #else  // MHD:
       // x1flux(IBY) = (v1*b2 - v2*b1) = -EMFZ
       // x1flux(IBZ) = (v1*b3 - v3*b1) =  EMFY
@@ -180,8 +213,12 @@ void Hydro::CalculateFluxes(AthenaArray<Real> &w, FaceField &b,
         pmb->precon->DonorCellX2(k, js-1, il, iu, w, bcc, wl_, wr_);
       } else if (order == 2) {
         pmb->precon->PiecewiseLinearX2(k, js-1, il, iu, w, bcc, wl_, wr_);
+        if (N_Z > 0) // vapor concentration reconstruction (Yu, 2025-11-18)
+          pmb->precon->PiecewiseLinearX2(k, js-1, il, iu, r_, rl_, rr_);
       } else {
         pmb->precon->PiecewiseParabolicX2(k, js-1, il, iu, w, bcc, wl_, wr_);
+        if (N_Z > 0) // vapor concentration reconstruction (Yu, 2025-11-18)
+          pmb->precon->PiecewiseParabolicX2(k, js-1, il, iu, r_, rl_, rr_);
       }
       for (int j=js; j<=je+1; ++j) {
         // reconstruct L/R states at j
@@ -189,8 +226,12 @@ void Hydro::CalculateFluxes(AthenaArray<Real> &w, FaceField &b,
           pmb->precon->DonorCellX2(k, j, il, iu, w, bcc, wlb_, wr_);
         } else if (order == 2) {
           pmb->precon->PiecewiseLinearX2(k, j, il, iu, w, bcc, wlb_, wr_);
+          if (N_Z > 0) // vapor concentration reconstruction (Yu, 2025-11-18)
+            pmb->precon->PiecewiseLinearX2(k, j, il, iu, r_, rlb_, rr_);
         } else {
           pmb->precon->PiecewiseParabolicX2(k, j, il, iu, w, bcc, wlb_, wr_);
+          if (N_Z > 0) // vapor concentration reconstruction (Yu, 2025-11-18)
+            pmb->precon->PiecewiseParabolicX2(k, j, il, iu, r_, rlb_, rr_);
         }
 
         pmb->pcoord->CenterWidth2(k, j, il, iu, dxw_);
@@ -213,6 +254,8 @@ void Hydro::CalculateFluxes(AthenaArray<Real> &w, FaceField &b,
 
         // swap the arrays for the next step
         wl_.SwapAthenaArray(wlb_);
+        if (N_Z > 0) // vapor concentration (Yu, 2025-11-18)
+          rl_.SwapAthenaArray(rlb_);
       }
     }
     if (order == 4) {
@@ -286,8 +329,12 @@ void Hydro::CalculateFluxes(AthenaArray<Real> &w, FaceField &b,
         pmb->precon->DonorCellX3(ks-1, j, il, iu, w, bcc, wl_, wr_);
       } else if (order == 2) {
         pmb->precon->PiecewiseLinearX3(ks-1, j, il, iu, w, bcc, wl_, wr_);
+        if(N_Z > 0) // vapor concentration reconstruction (Yu, 2025-11-18)
+          pmb->precon->PiecewiseLinearX3(ks-1, j, il, iu, r_, rl_, rr_);
       } else {
         pmb->precon->PiecewiseParabolicX3(ks-1, j, il, iu, w, bcc, wl_, wr_);
+        if(N_Z > 0) // vapor concentration reconstruction (Yu, 2025-11-18)
+          pmb->precon->PiecewiseParabolicX3(ks-1, j, il, iu, r_, rl_, rr_);
       }
       for (int k=ks; k<=ke+1; ++k) {
         // reconstruct L/R states at k
@@ -295,8 +342,12 @@ void Hydro::CalculateFluxes(AthenaArray<Real> &w, FaceField &b,
           pmb->precon->DonorCellX3(k, j, il, iu, w, bcc, wlb_, wr_);
         } else if (order == 2) {
           pmb->precon->PiecewiseLinearX3(k, j, il, iu, w, bcc, wlb_, wr_);
+          if(N_Z > 0) // vapor concentration reconstruction (Yu, 2025-11-18)
+            pmb->precon->PiecewiseLinearX3(k, j, il, iu, r_, rlb_, rr_);
         } else {
           pmb->precon->PiecewiseParabolicX3(k, j, il, iu, w, bcc, wlb_, wr_);
+          if(N_Z > 0) // vapor concentration reconstruction (Yu, 2025-11-18)
+            pmb->precon->PiecewiseParabolicX3(k, j, il, iu, r_, rlb_, rr_);
         }
 
         pmb->pcoord->CenterWidth3(k, j, il, iu, dxw_);
@@ -318,6 +369,8 @@ void Hydro::CalculateFluxes(AthenaArray<Real> &w, FaceField &b,
 
         // swap the arrays for the next step
         wl_.SwapAthenaArray(wlb_);
+        if(N_Z > 0) // vapor concentration (Yu, 2025-11-18)
+          rl_.SwapAthenaArray(rlb_);
       }
     }
     if (order == 4) {

@@ -49,6 +49,7 @@
 #include "mesh.hpp"
 #include "mesh_refinement.hpp"
 #include "meshblock_tree.hpp"
+#include "../phase_change/phase_change.hpp"  // (Yu, 2025-11-18) include phase change module
 
 //----------------------------------------------------------------------------------------
 //! MeshBlock constructor: constructs coordinate, boundary condition, hydro, field
@@ -219,6 +220,12 @@ MeshBlock::MeshBlock(int igid, int ilid, LogicalLocation iloc, RegionSize input_
     pbval->AdvanceCounterPhysID(DustFluidsBoundaryVariable::max_phys_id);
     if (pdustfluids->dfdif.dustfluids_diffusion_defined)
       pbval->AdvanceCounterPhysID(DustDiffusionBoundaryVariable::max_phys_id);
+  }
+  // Initialize PhaseChange module if phase change is enabled (Yu, 2025-11-18)
+  if (N_Z > 0) {
+    pphase_change = new PhaseChange(this, pin);
+  } else {
+    pphase_change = nullptr;
   }
   if (NSCALARS > 0) {
     // if (this->scalars_block)
@@ -425,6 +432,12 @@ MeshBlock::MeshBlock(int igid, int ilid, Mesh *pm, ParameterInput *pin,
     if (pdustfluids->dfdif.dustfluids_diffusion_defined)
       pbval->AdvanceCounterPhysID(DustDiffusionBoundaryVariable::max_phys_id);
   }
+  // Initialize PhaseChange module if phase change is enabled (Yu, 2025-11-18)
+  if (N_Z > 0) {
+    pphase_change = new PhaseChange(this, pin);
+  } else {
+    pphase_change = nullptr;
+  }
   if (NSCALARS > 0) {
     // if (this->scalars_block)
     pscalars = new PassiveScalars(this, pin);
@@ -491,6 +504,12 @@ MeshBlock::MeshBlock(int igid, int ilid, Mesh *pm, ParameterInput *pin,
       std::memcpy(pdustfluids->dfccdif.diff_mom_cc.data(), &(mbdata[os]), pdustfluids->dfccdif.diff_mom_cc.GetSizeInBytes());
       os += pdustfluids->dfccdif.diff_mom_cc.GetSizeInBytes();
     }
+  }
+  
+  // PhaseChange arrays (Yu, 2025-11-18)
+  if (N_Z > 0) {
+    std::memcpy(pphase_change->rho_Np_array.data(), &(mbdata[os]), pphase_change->rho_Np_array.GetSizeInBytes());
+    os += pphase_change->rho_Np_array.GetSizeInBytes();
   }
 
   if (NR_RADIATION_ENABLED || IM_RADIATION_ENABLED) {
@@ -588,6 +607,7 @@ MeshBlock::~MeshBlock() {
   delete porb;
   if (SELF_GRAVITY_ENABLED) delete pgrav;
   if (NDUSTFLUIDS > 0) delete pdustfluids;
+  if (N_Z > 0) delete pphase_change; // (Yu, 2025-11-18)
   if (NSCALARS > 0) delete pscalars;
   if (CHEMRADIATION_ENABLED) {
     delete pchemrad;
@@ -697,6 +717,9 @@ std::size_t MeshBlock::GetBlockSizeInBytes() {
     if (pdustfluids->dfdif.dustfluids_diffusion_defined)
       size += pdustfluids->dfccdif.diff_mom_cc.GetSizeInBytes();
   }
+  if (N_Z > 0) { // PhaseChange arrays for restart (Yu, 2025-11-18)
+    size += pphase_change->rho_Np_array.GetSizeInBytes();
+  }
   if (NSCALARS > 0) {
     size += pscalars->s.GetSizeInBytes();
     if (CHEMISTRY_ENABLED) {
@@ -735,6 +758,10 @@ std::size_t MeshBlock::GetBlockSizeInBytesGray() {
   if (MAGNETIC_FIELDS_ENABLED)
     size += (pfield->b.x1f.GetSizeInBytes() + pfield->b.x2f.GetSizeInBytes()
              + pfield->b.x3f.GetSizeInBytes());
+
+  if (N_Z > 0) { // PhaseChange arrays for restart (Yu, 2025-11-18)
+    size += pphase_change->rho_Np_array.GetSizeInBytes();
+  }
 
   if (NSCALARS > 0)
     size += pscalars->s.GetSizeInBytes();

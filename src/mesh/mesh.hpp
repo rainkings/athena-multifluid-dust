@@ -54,6 +54,7 @@ class MGCRDiffusionDriver;
 class EquationOfState;
 class Field;
 class DustFluids;
+class PhaseChange; // (Yu, 2025-11-18) added phase change module forward declaration
 class Gravity;
 class MGGravityDriver;
 class FFTDriver;
@@ -134,6 +135,8 @@ class MeshBlock {
   Field *pfield;
   Gravity *pgrav;
   DustFluids *pdustfluids;
+  // Phase change module (Yu, 2025-11-18)
+  PhaseChange *pphase_change;
   PassiveScalars *pscalars;
   EquationOfState *peos;
   ChemRadiation *pchemrad;

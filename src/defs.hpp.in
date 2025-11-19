@@ -127,6 +127,8 @@
 #define NDUSTFLUIDS @NUMBER_DUST_FLUIDS@    // N dust species
 #define NDUSTVARS (@NUMBER_DUST_FLUIDS@*4)  // 4*N dust variables
 #define NDUSTGAS  (@NUMBER_DUST_FLUIDS@+1)  // N dust + 1 gas
+#define N_P @NUMBER_PEBBLES@                // number of pebble sizes (phase change module)
+#define N_Z @NUMBER_COMPOSITIONS@           // number of compositions per pebble (phase change module)
 #define NSCALARS @NUMBER_PASSIVE_SCALARS@
 #define NSPECIES @NUMBER_CHEMICAL_SPECIES@
 #define NGHOST @NUMBER_GHOST_CELLS@

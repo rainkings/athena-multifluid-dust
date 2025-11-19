@@ -165,6 +165,16 @@ class EquationOfState {
   Real PresFromRhoEg(Real rho, Real egas);
   Real EgasFromRhoP(Real rho, Real pres);
   Real AsqFromRhoP(Real rho, Real pres);
+
+  //! \fn redefine new functions with more variables needed.
+  //! \brief include vapor fraction (fv) into the Conservative and primitive transform
+  Real PresFromRhoEg_fv(Real rho, Real egas, Real fv);
+  Real EgasFromRhoP_fv(Real rho, Real pres, Real fv);
+  Real AsqFromRhoP_fv(Real rho, Real pres, Real fv);
+  Real SoundSpeed_fv(const Real prim[(NHYDRO)], const Real fv);
+  Real calc_gamma(Real fv);
+  Real Get_mu(Real fv);
+
   Real GetIsoSoundSpeed() const {return iso_sound_speed_;}
   Real GetDensityFloor() const {return density_floor_;}
   Real GetPressureFloor() const {return pressure_floor_;}

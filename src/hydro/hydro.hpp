@@ -51,6 +51,9 @@ class Hydro {
   AthenaArray<Real> dvn, dvt;
   // (no more than MAX_NREGISTER allowed)
 
+  AthenaArray<Real> Tem; // temperature array (Yu, 2025-11-18)
+  AthenaArray<Real> inflx_x1; // influx x1 direction (Yu, 2025-11-18) array
+
   AthenaArray<Real> flux[3];  // face-averaged flux vector
 
   // storage for SMR/AMR
@@ -107,6 +110,8 @@ class Hydro {
   AthenaArray<Real> lambdas_m_l_;  // most negative wavespeeds in left state
   AthenaArray<Real> lambdas_p_r_;  // most positive wavespeeds in right state
   AthenaArray<Real> lambdas_m_r_;  // most negative wavespeeds in right state
+  //! \fn 2D, vapor(tracer) fraction (Yu, 2025-11-18)
+  AthenaArray<Real> rl_, rr_, rlb_; // 2D, left and right states in reconstruction of vapor concentration
   // 2D GR
   AthenaArray<Real> g_, gi_;       // metric and inverse, for timesteps and some rsolvers
   AthenaArray<Real> cons_;         // conserved state, for some GR Riemann solvers
@@ -115,6 +120,7 @@ class Hydro {
   // 4D scratch arrays
   AthenaArray<Real> scr1_nkji_, scr2_nkji_;
   AthenaArray<Real> wl3d_, wr3d_;
+  AthenaArray<Real> r_; // vapor concentration (Yu, 2025-11-18)
   // 1D scratch arrays
   AthenaArray<Real> laplacian_l_fc_, laplacian_r_fc_;
 

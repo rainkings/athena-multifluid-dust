@@ -21,6 +21,7 @@
 #include "dustfluids_diffusion_cc/cell_center_diffusions.hpp"
 #include "dustfluids_drags/dust_gas_drag.hpp"
 #include "srcterms/dustfluids_srcterms.hpp"
+#include "../phase_change/phase_change_constants.hpp"
 
 class MeshBlock;
 class ParameterInput;
@@ -86,6 +87,7 @@ class DustFluids {
   Real const_stopping_time[NDUSTFLUIDS]; // Constant stopping time of dust
   Real const_nu_dust[NDUSTFLUIDS];       // Constant concentration diffusivity of dust
 
+  AthenaArray<Real> inflx_dust_x1; // influx x1 direction (Yu, 2025-11-18) array
 
   // Public functions:
   // Calculate dust fluids flux
@@ -116,6 +118,13 @@ class DustFluids {
   void RiemannSolverDustFluids_noPenetration(const int k, const int j, const int il, const int iu,
       const int index, AthenaArray<Real> &prim_df_l,
       AthenaArray<Real> &prim_df_r, AthenaArray<Real> &dust_flux);
+
+    // tracer flux solver. (Yu, 2025-11-18)
+  void TracerUpwindFlux(const int k, const int j, const int il,
+                                       const int iu, // CoordinateDirection dir,
+                                       AthenaArray<Real> &r_l, AthenaArray<Real> &r_r, // 2D
+                                       AthenaArray<Real> &mass_flx,  // 3D
+                                       AthenaArray<Real> &flx_out);
 
   // Computes the new timestep of advection of dust in a meshblock
   Real NewAdvectionDt();
@@ -154,6 +163,8 @@ class DustFluids {
   // 4D scratch arrays
   AthenaArray<Real> scr1_nkji_, scr2_nkji_;
   AthenaArray<Real> df_w_l3d_, df_w_r3d_;
+  AthenaArray<Real> r_;  // vapor concentration array (Yu, 2025-11-18)
+  AthenaArray<Real> rl_, rr_, rlb_;  // 2D, left and right states in reconstruction of vapor concentration (Yu, 2025-11-18)
   // 1D scratch arrays
   AthenaArray<Real> laplacian_l_df_fc_, laplacian_r_df_fc_;
   void AddDiffusionFluxes();        // Add the diffusive flux on the dust flux

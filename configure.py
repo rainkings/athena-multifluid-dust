@@ -14,6 +14,8 @@
 #   --flux=xxx        use xxx as the Riemann solver
 #   --nghost=xxx      set NGHOST=xxx
 #   --ndustfluids=xxx set NDUSTFLUIDS=xxx
+#   --np=xxx          set N_P=xxx (number of pebble sizes for phase change)
+#   --nz=xxx          set N_Z=xxx (number of compositions per pebble for phase change)
 #   --nscalars=xxx    set NSCALARS=xxx
 #   --nspecies=xxx    set NSPECIES=xxx
 #   -eos_table        enable EOS table
@@ -101,7 +103,7 @@ parser.add_argument(
 parser.add_argument('--eos',
                     default='adiabatic',
                     choices=['adiabatic', 'isothermal', 'general/eos_table',
-                             'general/hydrogen', 'general/ideal'],
+                             'general/hydrogen', 'general/ideal', 'general/phase_change'],
                     help='select equation of state')
 
 # --flux=[name] argument
@@ -119,6 +121,16 @@ parser.add_argument('--nghost',
 parser.add_argument('--ndustfluids',
                     default='0',
                     help='set number of dust fluids')
+
+# --np=[value] argument (phase change module)
+parser.add_argument('--np',
+                    default='0',
+                    help='set number of pebble sizes (N_P) for phase change module')
+
+# --nz=[value] argument (phase change module)
+parser.add_argument('--nz',
+                    default='0',
+                    help='set number of compositions per pebble (N_Z) for phase change module')
 
 # --nscalars=[value] argument
 parser.add_argument('--nscalars',
@@ -486,6 +498,12 @@ definitions['NUMBER_GHOST_CELLS'] = args['nghost']
 
 # --ndustfluids=[value] argument
 definitions['NUMBER_DUST_FLUIDS'] = args['ndustfluids']
+
+# --np=[value] argument (phase change module)
+definitions['NUMBER_PEBBLES'] = args['np']
+
+# --nz=[value] argument (phase change module)
+definitions['NUMBER_COMPOSITIONS'] = args['nz']
 
 # --nscalars=[value] argument
 definitions['NUMBER_PASSIVE_SCALARS'] = args['nscalars']
@@ -1015,6 +1033,8 @@ output_config('Riemann solver', args['flux'], flog)
 output_config('Magnetic fields', ('ON' if args['b'] else 'OFF'), flog)
 output_config('Number of scalars', definitions['NUMBER_PASSIVE_SCALARS'], flog)
 output_config('Number of dust fluids', definitions['NUMBER_DUST_FLUIDS'], flog)
+output_config('Number of pebbles (N_P)', definitions['NUMBER_PEBBLES'], flog)
+output_config('Number of compositions (N_Z)', definitions['NUMBER_COMPOSITIONS'], flog)
 output_config('Number of chemical species', definitions['NUMBER_CHEMICAL_SPECIES'], flog)
 output_config('Special relativity', ('ON' if args['s'] else 'OFF'), flog)
 output_config('General relativity', ('ON' if args['g'] else 'OFF'), flog)

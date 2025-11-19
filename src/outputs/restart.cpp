@@ -31,6 +31,7 @@
 #include "../mesh/mesh.hpp"
 #include "../nr_radiation/radiation.hpp"
 #include "../parameter_input.hpp"
+#include "../phase_change/phase_change.hpp" // (Yu, 2025-11-18)
 #include "../scalars/scalars.hpp"
 #include "./outputs.hpp"
 
@@ -208,6 +209,13 @@ void RestartOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin, bool force_wr
         std::memcpy(pdata, cons_df_dif.data(), cons_df_dif.GetSizeInBytes());
         pdata += cons_df_dif.GetSizeInBytes();
       }
+    }
+
+    // PhaseChange arrays (Yu, 2025-11-18)
+    if (N_Z > 0) {
+      std::memcpy(pdata, pmb->pphase_change->rho_Np_array.data(), 
+                  pmb->pphase_change->rho_Np_array.GetSizeInBytes());
+      pdata += pmb->pphase_change->rho_Np_array.GetSizeInBytes();
     }
 
     // (conserved variable) Passive scalars:

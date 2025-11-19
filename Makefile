@@ -3,26 +3,26 @@
 
 # Files for conditional compilation
 
-PROBLEM_FILE = @PROBLEM_FILE@
-COORDINATES_FILE = @COORDINATES_FILE@
-EOS_FILE = @EOS_FILE@
-GENERAL_EOS_FILE = @GENERAL_EOS_FILE@
-RSOLVER_FILE = @RSOLVER_FILE@
-RSOLVER_DIR = @RSOLVER_DIR@
-MPIFFT_FILE = @MPIFFT_FILE@
-CHEMNET_FILE = @CHEMNET_FILE@
-CHEMISTRY_FILE = @CHEMISTRY_FILE@
-CHEM_ODE_SOLVER_FILE = @CHEM_ODE_SOLVER_FILE@
-CHEMRADIATION_FILE = @CHEMRADIATION_FILE@
+PROBLEM_FILE = disk_snowline_2D_RT_erg_2.cpp
+COORDINATES_FILE = spherical_polar.cpp
+EOS_FILE = general/phase_change.cpp
+GENERAL_EOS_FILE = general_hydro.cpp
+RSOLVER_FILE = hllc.cpp
+RSOLVER_DIR = hydro/
+MPIFFT_FILE =  
+CHEMNET_FILE = src/chemistry/network/none.cpp
+CHEMISTRY_FILE = src/chemistry/network_wrapper.cpp src/chemistry/utils/*.cpp
+CHEM_ODE_SOLVER_FILE = forward_euler.cpp
+CHEMRADIATION_FILE = const.cpp
 
 # General compiler specifications
 
-CXX := @COMPILER_COMMAND@
-CPPFLAGS := @PREPROCESSOR_FLAGS@
-CXXFLAGS := @COMPILER_FLAGS@
-LDFLAGS := @LINKER_FLAGS@
-LDLIBS := @LIBRARY_FLAGS@
-GCOV_CMD := @GCOV_COMMAND@
+CXX := g++
+CPPFLAGS := 
+CXXFLAGS := -O3 -std=c++11 -fopenmp
+LDFLAGS := 
+LDLIBS := 
+GCOV_CMD := gcov
 
 # Preliminary definitions
 

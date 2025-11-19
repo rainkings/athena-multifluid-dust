@@ -36,6 +36,9 @@
 void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int order) {
   MeshBlock *pmb = pmy_block;
   AthenaArray<Real> &x1flux = df_flux[X1DIR];
+  AthenaArray<Real> gas_mass_flux; // (Yu, 2025-11-18)
+  const AthenaArray<Real> &prim_gas = pmb->phydro->w; // (Yu, 2025-11-18)
+
   int is = pmb->is; int js = pmb->js; int ks = pmb->ks;
   int ie = pmb->ie; int je = pmb->je; int ke = pmb->ke;
   int il, iu, jl, ju, kl, ku;
@@ -43,8 +46,33 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
   AthenaArray<Real> &flux_fc          = scr1_nkji_;
   AthenaArray<Real> &laplacian_all_fc = scr2_nkji_;
 
+  //////////////////////
+  // (Yu, 2025-11-18) calculate concentration for all dust fluids.
+  int dk     = NGHOST;
+  int dj     = NGHOST;
+  if (pmb->block_size.nx3 == 1) dk = 0;
+  if (pmb->block_size.nx2 == 1) dj = 0;
+  kl = ks - dk;     ku = ke + dk;
+  jl = js - dj;     ju = je + dj;
+  il = is - NGHOST; iu = ie + NGHOST;
+
+  // calculate concentration
+  for (int n=0; n<NDUSTFLUIDS; ++n){
+    int rho_id = 4*n;
+    for (int k=kl; k<=ku; ++k) {
+      for (int j=jl; j<=ju; ++j) {
+#pragma omp simd
+        for (int i=il; i<=iu; ++i) {
+          r_(n,k,j,i) = prim_df(rho_id,k,j,i)/prim_gas(IDN,k,j,i);
+        }
+      }
+    }
+  }
+  //////////////////////
+
   //--------------------------------------------------------------------------------------
   // i-direction
+  gas_mass_flux.InitWithShallowSlice(pmb->phydro->flux[X1DIR], 4, IDN, 1); // (Yu, 2025-11-18) initialize gas mass flux in i-direction
 
   // set the loop limits
   jl = js, ju = je, kl = ks, ku = ke;
@@ -64,8 +92,10 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
         pmb->precon->DonorCellX1_DustFluids(k, j, is-1, ie+1, prim_df, df_w_l_, df_w_r_);
       } else if (order == 2) {
         pmb->precon->PiecewiseLinearX1_DustFluids(k, j, is-1, ie+1, prim_df, df_w_l_, df_w_r_);
+        pmb->precon->PiecewiseLinearX1(k, j, is-1, ie+1, r_, rl_, rr_); // tracer reconstruction (Yu, 2025-11-18)
       } else {
         pmb->precon->PiecewiseParabolicX1_DustFluids(k, j, is-1, ie+1, prim_df, df_w_l_, df_w_r_);
+        pmb->precon->PiecewiseParabolicX1(k, j, is-1, ie+1, r_, rl_, rr_); // tracer reconstruction (Yu, 2025-11-18)
         for (int n=0; n<NDUSTVARS; ++n) {
 #pragma omp simd
           for (int i=is; i<=ie+1; ++i) {
@@ -83,6 +113,20 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
         HLLENoCsRiemannSolverDustFluids(k, j, is, ie+1, 1, df_w_l_, df_w_r_, x1flux);
       else
         HLLERiemannSolverDustFluids(k, j, is, ie+1, 1, df_w_l_, df_w_r_, x1flux);
+      
+
+      // (Yu, 2025-11-18)
+      if(FLX_COR) {
+        // Only apply flux correction at outer boundary of simulation domain
+        if (pmb->pbval->block_bcs[BoundaryFace::outer_x1] == BoundaryFlag::user) {
+          for (int n=0; n<N_P*N_Z; n++) { // exclude vapor
+            int rho_id = 4*n;
+            x1flux(rho_id,k,j,ie+1) = inflx_dust_x1(n,k,j,0); // inflx of dustfluids
+          }
+        }
+      } // end if(FLX_COR)
+      // copy hydro mass flux to tracer. (Yu, 2025-11-18)
+      TracerUpwindFlux(k, j, is, ie+1, rl_, rr_, gas_mass_flux, x1flux);
 
       if (order == 4) {
         for (int n=0; n<NDUSTVARS; n++) {
@@ -146,6 +190,7 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
 
   if (pmb->pmy_mesh->f2) {
     AthenaArray<Real> &x2flux = df_flux[X2DIR];
+    gas_mass_flux.InitWithShallowSlice(pmb->phydro->flux[X2DIR], 4, IDN, 1); // (Yu, 2025-11-18) initialize gas mass flux in j-direction
 
     // set the loop limits
     il = is-1, iu = ie+1, kl = ks, ku = ke;
@@ -162,8 +207,10 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
         pmb->precon->DonorCellX2_DustFluids(k, js-1, il, iu, prim_df, df_w_l_, df_w_r_);
       } else if (order == 2) {
         pmb->precon->PiecewiseLinearX2_DustFluids(k, js-1, il, iu, prim_df, df_w_l_, df_w_r_);
+        pmb->precon->PiecewiseLinearX2(k, js-1, il, iu, r_, rl_, rr_); // tracer reconstruction (Yu, 2025-11-18)
       } else {
         pmb->precon->PiecewiseParabolicX2_DustFluids(k, js-1, il, iu, prim_df, df_w_l_, df_w_r_);
+        pmb->precon->PiecewiseParabolicX2(k, js-1, il, iu, r_, rl_, rr_); // tracer reconstruction (Yu, 2025-11-18)
         for (int n=0; n<NDUSTVARS; ++n) {
 #pragma omp simd
           for (int i=il; i<=iu; ++i) {
@@ -179,8 +226,10 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
           pmb->precon->DonorCellX2_DustFluids(k, j, il, iu, prim_df, df_w_lb_, df_w_r_);
         } else if (order == 2) {
           pmb->precon->PiecewiseLinearX2_DustFluids(k, j, il, iu, prim_df, df_w_lb_, df_w_r_);
+          pmb->precon->PiecewiseLinearX2(k, j, il, iu, r_, rlb_, rr_); // tracer reconstruction (Yu, 2025-11-18)
         } else {
           pmb->precon->PiecewiseParabolicX2_DustFluids(k, j, il, iu, prim_df, df_w_lb_, df_w_r_);
+          pmb->precon->PiecewiseParabolicX2(k, j, il, iu, r_, rlb_, rr_); // tracer reconstruction (Yu, 2025-11-18)
           for (int n=0; n<NDUSTVARS; ++n) {
 #pragma omp simd
             for (int i=il; i<=iu; ++i) {
@@ -199,6 +248,8 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
         else
           HLLERiemannSolverDustFluids(k, j, il, iu, 2, df_w_l_, df_w_r_, x2flux);
 
+        // copy hydro mass flux to tracer. (Yu, 2025-11-18)
+        TracerUpwindFlux(k, j, il, iu, rl_, rr_, gas_mass_flux, x2flux);
         if (order == 4) {
           for (int n=0; n<NDUSTVARS; n++) {
             for (int i=il; i<=iu; i++) {
@@ -210,6 +261,7 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
 
         // swap the arrays for the next step
         df_w_l_.SwapAthenaArray(df_w_lb_);
+        rl_.SwapAthenaArray(rlb_); //  (Yu, 2025-11-18)
       }
     }
     if (order == 4) {
@@ -264,6 +316,7 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
 
   if (pmb->pmy_mesh->f3) {
     AthenaArray<Real> &x3flux = df_flux[X3DIR];
+    gas_mass_flux.InitWithShallowSlice(pmb->phydro->flux[X3DIR], 4, IDN, 1); // (Yu, 2025-11-18) initialize gas mass flux in k-direction
 
     // set the loop limits
     //if (MAGNETIC_FIELDS_ENABLED)
@@ -275,8 +328,10 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
         pmb->precon->DonorCellX3_DustFluids(ks-1, j, il, iu, prim_df, df_w_l_, df_w_r_);
       } else if (order == 2) {
         pmb->precon->PiecewiseLinearX3_DustFluids(ks-1, j, il, iu, prim_df, df_w_l_, df_w_r_);
+        pmb->precon->PiecewiseLinearX3(ks-1, j, il, iu, r_, rl_, rr_); // tracer reconstruction (Yu, 2025-11-18)
       } else {
         pmb->precon->PiecewiseParabolicX3_DustFluids(ks-1, j, il, iu, prim_df, df_w_l_, df_w_r_);
+        pmb->precon->PiecewiseParabolicX3(ks-1, j, il, iu, r_, rl_, rr_); // tracer reconstruction (Yu, 2025-11-18)
         for (int n=0; n<NDUSTVARS; ++n) {
 #pragma omp simd
           for (int i=il; i<=iu; ++i) {
@@ -291,8 +346,10 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
           pmb->precon->DonorCellX3_DustFluids(k, j, il, iu, prim_df, df_w_lb_, df_w_r_);
         } else if (order == 2) {
           pmb->precon->PiecewiseLinearX3_DustFluids(k, j, il, iu, prim_df, df_w_lb_, df_w_r_);
+          pmb->precon->PiecewiseLinearX3(k, j, il, iu, r_, rlb_, rr_); // tracer reconstruction (Yu, 2025-11-18)
         } else {
           pmb->precon->PiecewiseParabolicX3_DustFluids(k, j, il, iu, prim_df, df_w_lb_, df_w_r_);
+          pmb->precon->PiecewiseParabolicX3(k, j, il, iu, r_, rlb_, rr_); // tracer reconstruction (Yu, 2025-11-18)
           for (int n=0; n<NDUSTVARS; ++n) {
 #pragma omp simd
             for (int i=il; i<=iu; ++i) {
@@ -310,6 +367,8 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
           HLLENoCsRiemannSolverDustFluids(k, j, il, iu, 3, df_w_l_, df_w_r_, x3flux);
         else
           HLLERiemannSolverDustFluids(k, j, il, iu, 3, df_w_l_, df_w_r_, x3flux);
+        // copy hydro mass flux to tracer. (Yu, 2025-11-18)
+        TracerUpwindFlux(k, j, il, iu, rl_, rr_, gas_mass_flux, x3flux);
 
         if (order == 4) {
           for (int n=0; n<NDUSTVARS; n++) {
@@ -322,6 +381,7 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
 
         // swap the arrays for the next step
         df_w_l_.SwapAthenaArray(df_w_lb_);
+        rl_.SwapAthenaArray(rlb_); // (Yu, 2025-11-18)
       }
     }
     if (order == 4) {

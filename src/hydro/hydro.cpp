@@ -64,6 +64,10 @@ Hydro::Hydro(MeshBlock *pmb, ParameterInput *pin) :
     u_af_src.NewAthenaArray(NHYDRO, nc3, nc2, nc1);
   }
 
+  // Temperature array (Yu, 2025-11-18)
+  Tem.NewAthenaArray(nc3, nc2, nc1);
+  inflx_x1.NewAthenaArray(nc3,nc2,1);
+
   // Allocate optional memory primitive/conserved variable registers for time-integrator
   if (pmb->precon->xorder == 4) {
     // fourth-order hydro cell-centered approximations
@@ -135,6 +139,14 @@ Hydro::Hydro(MeshBlock *pmb, ParameterInput *pin) :
     g_.NewAthenaArray(NMETRIC, nc1);
     gi_.NewAthenaArray(NMETRIC, nc1);
     cons_.NewAthenaArray(NWAVE, nc1);
+  }
+
+  // Allocate memory for scratch arrays of vapor concentration (Yu, 2025-11-18)
+  if (N_Z > 0) {
+    rl_.NewAthenaArray(NDUSTFLUIDS, nc1);
+    rr_.NewAthenaArray(NDUSTFLUIDS, nc1);
+    rlb_.NewAthenaArray(NDUSTFLUIDS, nc1);
+    r_.NewAthenaArray(NDUSTFLUIDS, nc3, nc2, nc1);
   }
 
   // fourth-order hydro integration scheme

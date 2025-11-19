@@ -1,1 +1,2 @@
-/shell_configure.sh
+/shell_config.sh
+*.log

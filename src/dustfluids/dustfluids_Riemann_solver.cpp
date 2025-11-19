@@ -23,6 +23,7 @@
 #include "../athena_arrays.hpp"
 #include "../eos/eos.hpp"
 #include "dustfluids.hpp"
+#include "../phase_change/phase_change_constants.hpp"
 
 //----------------------------------------------------------------------------------------
 //! \fn void DustFluids::RiemannSolver_DustFluids
@@ -133,4 +134,27 @@ void DustFluids::RiemannSolverDustFluids_noPenetration(const int k, const int j,
     }
   }
   return;
+}
+
+// vapor flux solver. (Yu, 2025-11-18)
+void DustFluids::TracerUpwindFlux(const int k, const int j, const int il,
+  const int iu, // CoordinateDirection dir,
+  AthenaArray<Real> &r_l, AthenaArray<Real> &r_r, // 2D
+  AthenaArray<Real> &gas_mass_flx,  // 3D
+  AthenaArray<Real> &flx_out) { // 4D
+
+for (int n = 0; n < NDUSTFLUIDS; ++n) {
+  int rho_id = 4 * n;
+  if (n == vapor_id) {
+    for (int i = il; i <= iu; i++) {
+      Real fluid_flx = gas_mass_flx(k, j, i);
+      if (fluid_flx >= 0.0)
+        flx_out(rho_id, k, j, i) = fluid_flx * r_l(n, i);
+      else
+        flx_out(rho_id, k, j, i) = fluid_flx * r_r(n, i);
+    }
+  }
+}
+
+return;
 }

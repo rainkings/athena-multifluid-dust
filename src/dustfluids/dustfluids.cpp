@@ -159,6 +159,16 @@ DustFluids::DustFluids(MeshBlock *pmb, ParameterInput *pin)  :
   df_w_lb_.NewAthenaArray(NDUSTVARS, nc1);
   x1face_area_.NewAthenaArray(nc1+1);
 
+  // vapor concentration array (Yu, 2025-11-18)
+  rl_.NewAthenaArray(NDUSTFLUIDS, nc1);
+  rr_.NewAthenaArray(NDUSTFLUIDS, nc1);
+  rlb_.NewAthenaArray(NDUSTFLUIDS, nc1);
+  r_.NewAthenaArray(NDUSTFLUIDS, nc3, nc2, nc1);
+
+  if (FLX_COR) {
+    inflx_dust_x1.NewAthenaArray(N_P*N_Z, pmb->ncells3, pmb->ncells2, pmb->ncells1);
+  }
+
   if (pm->f2) {
     x2face_area_.NewAthenaArray(nc1);
     x2face_area_p1_.NewAthenaArray(nc1);

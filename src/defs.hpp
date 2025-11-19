@@ -16,18 +16,18 @@
 // configure.py dict(definitions) string values:
 
 // problem generator
-#define PROBLEM_GENERATOR "streaming_nonlinear"
+#define PROBLEM_GENERATOR "disk_snowline_2D_RT_erg_2"
 
 // coordinate system
-#define COORDINATE_SYSTEM "cartesian"
+#define COORDINATE_SYSTEM "spherical_polar"
 
 // Riemann solver
-#define RIEMANN_SOLVER "roe"
+#define RIEMANN_SOLVER "hllc"
 
 // configure.py dict(definitions) Boolean values:
 
 // Equation of state
-#define EQUATION_OF_STATE "isothermal"
+#define EQUATION_OF_STATE "general/phase_change"
 
 // ChemNetwork class header file included in species.hpp
 #define CHEMNETWORK_HEADER "../chemistry/network/chem_network.hpp"
@@ -38,13 +38,13 @@
 // configure.py dict(definitions) Boolean 1/0 macros:
 
 // use general EOS framework default=0 (false).
-#define GENERAL_EOS 0
+#define GENERAL_EOS 1
 
 // use EOS table default=0 (false).
 #define EOS_TABLE_ENABLED 0
 
 // non-barotropic equation of state (i.e. P not simply a func of rho)? default=1 (true)
-#define NON_BAROTROPIC_EOS 0
+#define NON_BAROTROPIC_EOS 1
 
 // include magnetic fields? default=0 (false)
 #define MAGNETIC_FIELDS_ENABLED 0
@@ -83,7 +83,7 @@
 #define SINGLE_PRECISION_ENABLED 0
 
 // use double precision for HDF5 output? default=0 (false; write out binary32)
-#define H5_DOUBLE_PRECISION_ENABLED 1
+#define H5_DOUBLE_PRECISION_ENABLED 0
 
 // compile with debug symbols and use optional sections of source code? default=0 (false)
 #define DEBUG 0
@@ -95,13 +95,13 @@
 #define NO_FFT
 
 // MPI parallelization (MPI_PARALLEL or NOT_MPI_PARALLEL)
-#define MPI_PARALLEL
+#define NOT_MPI_PARALLEL
 
 // OpenMP parallelization (OPENMP_PARALLEL or NOT_OPENMP_PARALLEL)
 #define OPENMP_PARALLEL
 
 // HDF5 output (HDF5OUTPUT or NO_HDF5OUTPUT)
-#define HDF5OUTPUT
+#define NO_HDF5OUTPUT
 
 // FFTW library (FFT or NO_FFT)
 #define NO_FFT
@@ -114,22 +114,24 @@
 #define ENABLE_EXCEPTIONS
 
 // compiler options
-#define COMPILED_WITH "g++-simd"
-#define COMPILER_COMMAND "mpicxx"
-#define COMPILED_WITH_OPTIONS " -I/usr/local/hdf5/include -O3 -std=c++11 -fopenmp-simd -fwhole-program -flto -ffast-math -march=native -fprefetch-loop-arrays -fopenmp  -L/usr/local/hdf5/lib  -lhdf5" // NOLINT
+#define COMPILED_WITH "g++"
+#define COMPILER_COMMAND "g++"
+#define COMPILED_WITH_OPTIONS " -O3 -std=c++11 -fopenmp  " // NOLINT
 
 //----------------------------------------------------------------------------------------
 // macros associated with numerical algorithm (rarely modified)
 
-#define NHYDRO 4
+#define NHYDRO 5
 #define NFIELD 0
-#define NWAVE 4
-#define NDUSTFLUIDS 1    // N dust species
-#define NDUSTVARS (1*4)  // 4*N dust variables
-#define NDUSTGAS  (1+1)  // N dust + 1 gas
+#define NWAVE 5
+#define NDUSTFLUIDS 3    // N dust species
+#define NDUSTVARS (3*4)  // 4*N dust variables
+#define NDUSTGAS  (3+1)  // N dust + 1 gas
+#define N_P 1                // number of pebble sizes (phase change module)
+#define N_Z 2           // number of compositions per pebble (phase change module)
 #define NSCALARS 0
 #define NSPECIES 0
-#define NGHOST 3
+#define NGHOST 2
 #define NGRAV @NGRAV_VARIABLES@
 #define NCR 0   // cosmic ray transport module variable
 #define NRAD 0  // Radiation variables for history output

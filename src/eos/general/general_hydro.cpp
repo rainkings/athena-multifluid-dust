@@ -27,6 +27,7 @@
 #include "../../field/field.hpp"
 #include "../../mesh/mesh.hpp"
 #include "../../parameter_input.hpp"
+#include "../../phase_change/phase_change_constants.hpp" // (Yu, 2025-11-18)
 #include "../eos.hpp"
 
 // EquationOfState constructor
@@ -107,7 +108,13 @@ void EquationOfState::ConservedToPrimitive(
         u_e = (u_e - ke > energy_floor_) ?  u_e : energy_floor_ + ke;
         // MSBC: if ke >> energy_floor_ then u_e - ke may still be zero at this point due
         //       to floating point errors/catastrophic cancellation
-        w_p = PresFromRhoEg(u_d, u_e - ke);
+        if (N_Z > 0){ // (Yu, 2025-11-18)
+          int vapor_den_id = vapor_id*4;
+          Real fv = pmy_block_->pdustfluids->df_w(vapor_den_id,k,j,i)/u_d;
+          w_p = PresFromRhoEg_fv(u_d,u_e-ke,fv);
+        }else{
+          w_p = PresFromRhoEg(u_d, u_e - ke);
+        }
       }
     }
   }
@@ -150,7 +157,13 @@ void EquationOfState::PrimitiveToConserved(
         u_m2 = w_vy*w_d;
         u_m3 = w_vz*w_d;
         // cellwise conversion
-        u_e = EgasFromRhoP(u_d, w_p) + 0.5*w_d*(SQR(w_vx) + SQR(w_vy) + SQR(w_vz));
+        if (N_Z > 0){ // (Yu, 2025-11-18)
+          int vapor_den_id = vapor_id*4;
+          Real fv = pmy_block_->pdustfluids->df_w(vapor_den_id,k,j,i)/w_d;
+          u_e = EgasFromRhoP_fv(u_d, w_p, fv) + 0.5*w_d*(SQR(w_vx) + SQR(w_vy) + SQR(w_vz));
+        }else{
+          u_e = EgasFromRhoP(u_d, w_p) + 0.5*w_d*(SQR(w_vx) + SQR(w_vy) + SQR(w_vz));
+        }
       }
     }
   }
@@ -164,6 +177,21 @@ void EquationOfState::PrimitiveToConserved(
 
 Real EquationOfState::SoundSpeed(const Real prim[NHYDRO]) {
   return std::sqrt(AsqFromRhoP(prim[IDN], prim[IPR]));
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn Real EquationOfState::SoundSpeed_fv(Real prim[NHYDRO], Real fv)
+//! \brief returns adiabatic sound speed given vector of primitive variables and vapor fraction (Yu, 2025-11-18)
+
+Real EquationOfState::SoundSpeed_fv(const Real prim[NHYDRO], const Real fv) {
+  if(std::isnan(fv)){
+    std::stringstream msg;
+    msg << "### FATAL ERROR in EquationOfState::SoundSpeed_fv" << std::endl
+        << "fv= nan" << std::endl;
+    ATHENA_ERROR(msg);
+    return -1.0;
+  }
+  return std::sqrt(AsqFromRhoP_fv(prim[IDN], prim[IPR], fv));
 }
 
 //---------------------------------------------------------------------------------------

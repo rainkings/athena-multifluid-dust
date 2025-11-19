@@ -30,6 +30,7 @@
 #include "../scalars/scalars.hpp"
 #include "hydro.hpp"
 #include "hydro_diffusion/hydro_diffusion.hpp"
+#include "../phase_change/phase_change_constants.hpp" // (Yu, 2025-11-18)
 
 // MPI/OpenMP header
 #ifdef MPI_PARALLEL
@@ -113,7 +114,15 @@ void Hydro::NewBlockTimeStep() {
               speed = std::max(cspeed,(std::abs(wi[IVZ]) + cf));
               dt3(i) /= (speed);
             } else {
-              Real cs = pmb->peos->SoundSpeed(wi);
+              Real cs;
+              if (N_Z > 0){ // (Yu, 2025-11-18)
+                //! \fn Cs change with grid cells.
+                int vapor_den_id = vapor_id*4;
+                Real fv = pmb->pdustfluids->df_w(vapor_den_id,k,j,i)/wi[IDN];
+                cs = pmb->peos->SoundSpeed_fv(wi,fv);
+              }else {
+                cs = pmb->peos->SoundSpeed(wi);
+              }
               Real speed1 = std::max(cspeed, (std::abs(wi[IVX]) + cs));
               Real speed2 = std::max(cspeed, (std::abs(wi[IVY]) + cs));
               Real speed3 = std::max(cspeed, (std::abs(wi[IVZ]) + cs));

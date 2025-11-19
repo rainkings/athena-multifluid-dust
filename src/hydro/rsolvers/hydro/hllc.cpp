@@ -24,7 +24,7 @@
 #include "../../../athena_arrays.hpp"
 #include "../../../eos/eos.hpp"
 #include "../../hydro.hpp"
-
+#include "../../../phase_change/phase_change_constants.hpp" // (Yu, 2025-11-18)
 //----------------------------------------------------------------------------------------
 //! \fn void Hydro::RiemannSolver
 //! \brief The HLLC Riemann solver for adiabatic hydrodynamics (use HLLE for isothermal)
@@ -65,13 +65,30 @@ void Hydro::RiemannSolver(const int k, const int j, const int il, const int iu,
     //--- Step 2.  Compute middle state estimates with PVRS (Toro 10.5.2)
 
     Real al, ar, el, er;
-    Real cl = pmy_block->peos->SoundSpeed(wli);
-    Real cr = pmy_block->peos->SoundSpeed(wri);
+    Real cl, cr, fv_l, fv_r;
+    if (N_Z > 0){ // (Yu, 2025-11-18)
+      // cs_r, cs_l change with grid cells.
+      int vapor_den_id = vapor_id*4;
+      fv_l = rl_(vapor_den_id,i);
+      fv_r = rr_(vapor_den_id,i);
+      cl = pmy_block->peos->SoundSpeed_fv(wli,fv_l);
+      cr = pmy_block->peos->SoundSpeed_fv(wri,fv_r);
+    }else{
+      cl = pmy_block->peos->SoundSpeed(wli);
+      cr = pmy_block->peos->SoundSpeed(wri);
+    }
     if (GENERAL_EOS) {
-      el = pmy_block->peos->EgasFromRhoP(wli[IDN], wli[IPR]) +
+      if(N_Z > 0){ // (Yu, 2025-11-18)
+        el = pmy_block->peos->EgasFromRhoP_fv(wli[IDN], wli[IPR],fv_l) +
            0.5*wli[IDN]*(SQR(wli[IVX]) + SQR(wli[IVY]) + SQR(wli[IVZ]));
-      er = pmy_block->peos->EgasFromRhoP(wri[IDN], wri[IPR]) +
+        er = pmy_block->peos->EgasFromRhoP_fv(wri[IDN], wri[IPR],fv_r) +
            0.5*wri[IDN]*(SQR(wri[IVX]) + SQR(wri[IVY]) + SQR(wri[IVZ]));
+      }else{
+        el = pmy_block->peos->EgasFromRhoP(wli[IDN], wli[IPR]) +
+           0.5*wli[IDN]*(SQR(wli[IVX]) + SQR(wli[IVY]) + SQR(wli[IVZ]));
+        er = pmy_block->peos->EgasFromRhoP(wri[IDN], wri[IPR]) +
+           0.5*wri[IDN]*(SQR(wri[IVX]) + SQR(wri[IVY]) + SQR(wri[IVZ]));
+      }
     } else {
       el = wli[IPR]*igm1 + 0.5*wli[IDN]*(SQR(wli[IVX]) + SQR(wli[IVY]) + SQR(wli[IVZ]));
       er = wri[IPR]*igm1 + 0.5*wri[IDN]*(SQR(wri[IVX]) + SQR(wri[IVY]) + SQR(wri[IVZ]));
@@ -87,8 +104,14 @@ void Hydro::RiemannSolver(const int k, const int j, const int il, const int iu,
 
     Real ql, qr;
     if (GENERAL_EOS) {
-      Real gl = pmy_block->peos->AsqFromRhoP(rhol, pmid) * rhol / pmid;
-      Real gr = pmy_block->peos->AsqFromRhoP(rhor, pmid) * rhor / pmid;
+      Real gl, gr;
+      if(N_Z > 0){ // (Yu, 2025-11-18)
+        gl = pmy_block->peos->AsqFromRhoP_fv(rhol, pmid, fv_l) * rhol / pmid;
+        gr = pmy_block->peos->AsqFromRhoP_fv(rhor, pmid, fv_r) * rhor / pmid;
+      }else{
+        gl = pmy_block->peos->AsqFromRhoP(rhol, pmid) * rhol / pmid;
+        gr = pmy_block->peos->AsqFromRhoP(rhor, pmid) * rhor / pmid;
+      }      
       ql = (pmid <= wli[IPR]) ? 1.0 :
            std::sqrt(1.0 + (gl + 1) / (2 * gl) * (pmid / wli[IPR]-1.0));
       qr = (pmid <= wri[IPR]) ? 1.0 :

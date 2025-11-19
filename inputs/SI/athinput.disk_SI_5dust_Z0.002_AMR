@@ -1,0 +1,243 @@
+<comment>
+problem   = VSI and SI and RWI in spherical polar coordinates
+reference =
+configure = --prob=disk_VSI --coord=spherical_polar
+
+<job>
+problem_id  = VSI      # problem ID: basename of output filenames
+
+<output1>
+file_type      = hst               # History data dump
+dt             = 0.628318530718    # time increment between outputs
+orbital_system = 1
+
+<output2>
+file_type      = hdf5               # HDF5 data dump
+variable       = prim               # output variable
+id             = prim               # output id
+dt             = 62.8318530718      # time increment between outputs
+orbital_system = 1
+
+<output3>
+file_type = rst                # Restart data dump
+#dt       = 314.159265359       # time increment between outputs
+#dt       = 62.8318530718       # time increment between outputs
+#dt       = 31.4159265359       # time increment between outputs
+dt       = 125.663706144       # time increment between outputs
+#dt       = 6.28318530718       # time increment between outputs
+
+<output4>
+file_type = hdf5           # HDF5 data dump
+variable  = sound_speed    #
+id        = sound_speed    #
+dt        = 6.28318530718  # time increment between outputs
+
+<output5>
+file_type = hdf5           # HDF5 data dump
+variable  = p              #
+id        = press          #
+dt        = 6.28318530718  # time increment between outputs
+
+<output6>
+file_type = hdf5            # HDF5 data dump
+variable  = dust_ratio_1      #
+id        = dust_ratio_1      #
+dt        = 6.28318530718   # time increment between outputs
+
+<output7>
+file_type = hdf5            # HDF5 data dump
+variable  = dust_ratio_1      #
+id        = dust_ratio_1_max  #
+dt        = 6.28318530718   # time increment between outputs
+x2_max    = 1
+
+<output8>
+file_type = hdf5            # HDF5 data dump
+variable  = dust_ratio_2      #
+id        = dust_ratio_2      #
+dt        = 6.28318530718   # time increment between outputs
+
+<output9>
+file_type = hdf5            # HDF5 data dump
+variable  = dust_ratio_2      #
+id        = dust_ratio_2_max  #
+dt        = 6.28318530718   # time increment between outputs
+x2_max    = 1
+
+<output10>
+file_type = hdf5            # HDF5 data dump
+variable  = dust_ratio_3      #
+id        = dust_ratio_3      #
+dt        = 6.28318530718   # time increment between outputs
+
+<output11>
+file_type = hdf5            # HDF5 data dump
+variable  = dust_ratio_3      #
+id        = dust_ratio_3_max  #
+dt        = 6.28318530718   # time increment between outputs
+x2_max    = 1
+
+<output12>
+file_type = hdf5            # HDF5 data dump
+variable  = dust_ratio_4      #
+id        = dust_ratio_4      #
+dt        = 6.28318530718   # time increment between outputs
+
+<output13>
+file_type = hdf5            # HDF5 data dump
+variable  = dust_ratio_4      #
+id        = dust_ratio_4_max  #
+dt        = 6.28318530718   # time increment between outputs
+x2_max    = 1
+
+<output14>
+file_type = hdf5            # HDF5 data dump
+variable  = dust_ratio_5      #
+id        = dust_ratio_5      #
+dt        = 6.28318530718   # time increment between outputs
+
+<output15>
+file_type = hdf5            # HDF5 data dump
+variable  = dust_ratio_5      #
+id        = dust_ratio_5_max  #
+dt        = 6.28318530718   # time increment between outputs
+x2_max    = 1
+
+<time>
+cfl_number     = 0.3       # The Courant, Friedrichs, & Lewy (CFL) Number
+nlim           = -1        # cycle limit
+tlim           = 6283.18530718     # time limit
+#tlim           = 7539.822368616     # time limit
+#tlim           = 0.0       # time limit
+integrator     = vl2       # time integration algorithm
+xorder         = 2         # order of spatial reconstruction
+ncycle_out     = 1         # interval for stdout summary info
+dt_diagnostics = 0         # interval (in STS stages) for stdout extra dt info
+
+<mesh>
+nx1         = 1024       # Number of zones in X1-direction
+x1min       = 1.0       # minimum value of X1
+x1max       = 3.0       # maximum value of X1
+ix1_bc      = user      # Inner-X1 boundary condition flag
+ox1_bc      = user      # Outer-X1 boundary condition flag
+x1rat       = 1.001
+
+nx2         = 256             # Number of zones in X2-direction
+x2min       = 1.3207963268    # minimum value of X2
+x2max       = 1.8207963268    # maximum value of X2
+ix2_bc      = user            # Inner-X2 boundary condition flag
+ox2_bc      = user            # Outer-X2 boundary condition flag
+
+nx3         = 1              # Number of zones in X3-direction
+x3min       = 0.0            # minimum value of X3
+x3max       = 3.14159265359  # maximum value of X3
+ix3_bc      = periodic       # Inner-X3 boundary condition flag
+ox3_bc      = periodic       # Outer-X3 boundary condition flag
+
+#refinement     = static
+
+refinement     = adaptive
+derefine_count = 5
+numlevel       = 4
+
+
+<meshblock>
+nx1 = 8
+nx2 = 8
+nx3 = 1
+
+#<refinement1>
+#x1min = 1.2
+#x1max = 2.6
+#x2min = 1.5457963267949
+#x2max = 1.5957963267949
+#level = 4
+
+
+<hydro>
+gamma             = 1.4         # gamma = C_p/C_v
+iso_sound_speed   = 0.10        # isothermal sound speed
+dfloor            = 1e-7
+pfloor            = 1e-9
+sfloor            = 1e-8
+gas_percent_floor = 1e-2
+
+<orbital_advection>
+OAorder     = 1   # 0: w/o OA, 1: w/ OA (1st), 2: w/ OA (2nd)
+Omega0      = 0.0 # angular velocity of the system
+
+<problem>
+GM        = 1.0
+r0        = 1.0
+rho0      = 1.0
+cs2_0     = 0.0025
+qvalue    = -0.5
+pvalue    = -2.25
+amp       = 0.01
+out_level = 0         # Physical level
+
+Isothermal_Flag           = 0
+Inner_Gas_Damping_Flag    = 0
+Outer_Gas_Damping_Flag    = 0
+Theta_Gas_Damping_Flag    = 0
+Inner_Dust_Damping_Flag   = 0
+Outer_Dust_Damping_Flag   = 0
+
+inner_dampingregion_ratio = 1.1
+outer_dampingregion_ratio = 1.1
+damping_rate              = 1.
+#beta                      = 0.01
+
+#refine_theta_lower = 1.56976
+#refine_theta_upper = 1.57179
+
+refine_theta_lower = 1.5147963268
+refine_theta_upper = 1.6267963266
+
+refine_r_min       = 1.2
+refine_r_max       = 2.4
+time_refine        = 1885
+threshold_ratio    = 3.0
+
+
+#<loadbalancing>
+#balancer  = automatic # load balancing method (default = "default")
+#interval  = 100      # interval between load balancing (default = 10)
+#tolerance = 0.2     # acceptable load imbalance (default = 0.5 = 50%)
+
+
+<dust>
+Diffusion_Flag          = 0            # The flag of dust diffusion
+Momentum_Diffusion_Flag = 1            # The flag of momentum diffusion
+DustFeedback_Flag       = 1            # The flag of dust feedback term
+Dissipation_Flag        = 0
+drag_method             = 2nd-implicit # The drag integrator method
+dust_xorder             = 2
+#time_drag               = 1885.
+time_drag               = 0.0
+dust_percent_floor      = 1e-4
+
+dffloor_1              = 1e-11
+initial_D2G_1          = 0.002
+Stokes_number_1        = 0.1
+Hratio_1               = 0.1
+
+dffloor_2              = 1e-11
+initial_D2G_2          = 0.002
+Stokes_number_2        = 0.03
+Hratio_2               = 0.1
+
+dffloor_3              = 1e-11
+initial_D2G_3          = 0.002
+Stokes_number_3        = 0.01
+Hratio_3               = 0.1
+
+dffloor_4              = 1e-11
+initial_D2G_4          = 0.002
+Stokes_number_4        = 0.003
+Hratio_4               = 0.1
+
+dffloor_5              = 1e-11
+initial_D2G_5          = 0.002
+Stokes_number_5        = 0.001
+Hratio_5               = 0.1
