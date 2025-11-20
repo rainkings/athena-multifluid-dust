@@ -58,7 +58,7 @@ PhaseChange::PhaseChange(MeshBlock *pmb, ParameterInput *pin):
   m_p0_array.NewAthenaArray(N_P);
   
   // Register arrays for restart file I/O (Yu, 2025-11-18)
-  pmb->RegisterMeshBlockData(rho_Np_array);
+  // pmb->RegisterMeshBlockData(rho_Np_array);  // COMMENTED OUT FOR DEBUGGING
 
   // Initialize problem-specific constants from ParameterInput
   Units *punit = pmb->pmy_mesh->punit;
@@ -68,7 +68,7 @@ PhaseChange::PhaseChange(MeshBlock *pmb, ParameterInput *pin):
   
   // (Yu, 2025-11-18) Convert input parameters from CGS to code units
   for (int p = 0; p < N_P; ++p) {
-    Real m_p0_cgs = pin->GetReal("problem", "m_p0_" + std::to_string(p+1)); // [g]
+    Real m_p0_cgs = pin->GetReal("dust", "m_p0_" + std::to_string(p+1)); // [g]
     m_p0_array(p) = m_p0_cgs / punit->code_mass_cgs; // Convert to code units
   }
   
@@ -173,7 +173,7 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
         Real fv0 = fv;
 
         // Check for NaN
-        if(std::isnan(fv) || std::isnan(gas_mom1) || std::isnan(gas_erg)){
+        if(std::isnan(fv) || (fv < 0.0) || std::isnan(gas_mom1) || std::isnan(gas_erg)){
           std::stringstream msg;
           msg << "### FATAL ERROR in PhaseChange::PhaseChangeSource" << std::endl
               << "NaN detected: fv = " << fv << ", gas_mom1 = " << gas_mom1
@@ -412,7 +412,9 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
         fv = rho_v/rho_g;
         Real mu1 = Get_mu(fv);
         Real prs = rho_g*Tem/(mu1*KELVIN);
-        Real gamma = pmb->peos->GetGamma();
+        // Use calc_gamma for general EOS, GetGamma for adiabatic EOS (Yu, 2025-11-18)
+        Real gamma;
+        gamma = pmb->peos->calc_gamma(fv);
 
         // Update gas energy and momentum
         gas_mom1 = rho_g*gas_vel_array(0);

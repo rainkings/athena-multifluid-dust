@@ -34,6 +34,7 @@ static const Real speed_of_light_cgs   = 2.99792458e+10;
 static const Real echarge_cgs          = 4.80320427e-10;
 static const Real kelvin_cgs           = 1;
 static const Real sigma_cgs            = 5.67051e-5; /**< Stephan Boltmann constant. */
+static const Real au_cgs               = 1.495978707e13; /**< Astronomical unit in cm. */
 } // namespace Constants
 
 //! \brief Class for units

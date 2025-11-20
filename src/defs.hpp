@@ -27,7 +27,7 @@
 // configure.py dict(definitions) Boolean values:
 
 // Equation of state
-#define EQUATION_OF_STATE "general/phase_change"
+#define EQUATION_OF_STATE "general/eos_phase_change"
 
 // ChemNetwork class header file included in species.hpp
 #define CHEMNETWORK_HEADER "../chemistry/network/chem_network.hpp"
@@ -83,7 +83,7 @@
 #define SINGLE_PRECISION_ENABLED 0
 
 // use double precision for HDF5 output? default=0 (false; write out binary32)
-#define H5_DOUBLE_PRECISION_ENABLED 0
+#define H5_DOUBLE_PRECISION_ENABLED 1
 
 // compile with debug symbols and use optional sections of source code? default=0 (false)
 #define DEBUG 0
@@ -101,7 +101,7 @@
 #define OPENMP_PARALLEL
 
 // HDF5 output (HDF5OUTPUT or NO_HDF5OUTPUT)
-#define NO_HDF5OUTPUT
+#define HDF5OUTPUT
 
 // FFTW library (FFT or NO_FFT)
 #define NO_FFT
@@ -116,7 +116,7 @@
 // compiler options
 #define COMPILED_WITH "g++"
 #define COMPILER_COMMAND "g++"
-#define COMPILED_WITH_OPTIONS " -O3 -std=c++11 -fopenmp  " // NOLINT
+#define COMPILED_WITH_OPTIONS " -I/usr/local/hdf5/1.12.1/include -O3 -std=c++11 -fopenmp  -L/usr/local/hdf5/1.12.1/lib  -lhdf5" // NOLINT
 
 //----------------------------------------------------------------------------------------
 // macros associated with numerical algorithm (rarely modified)

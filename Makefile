@@ -5,7 +5,7 @@
 
 PROBLEM_FILE = disk_snowline_2D_RT_erg_2.cpp
 COORDINATES_FILE = spherical_polar.cpp
-EOS_FILE = general/phase_change.cpp
+EOS_FILE = general/eos_phase_change.cpp
 GENERAL_EOS_FILE = general_hydro.cpp
 RSOLVER_FILE = hllc.cpp
 RSOLVER_DIR = hydro/
@@ -18,10 +18,10 @@ CHEMRADIATION_FILE = const.cpp
 # General compiler specifications
 
 CXX := g++
-CPPFLAGS := 
+CPPFLAGS :=  -I/usr/local/hdf5/1.12.1/include
 CXXFLAGS := -O3 -std=c++11 -fopenmp
-LDFLAGS := 
-LDLIBS := 
+LDFLAGS :=  -L/usr/local/hdf5/1.12.1/lib
+LDLIBS :=  -lhdf5
 GCOV_CMD := gcov
 
 # Preliminary definitions

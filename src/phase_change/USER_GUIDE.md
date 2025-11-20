@@ -302,6 +302,18 @@ The Phase Change module is integrated throughout Athena++ at multiple levels. Th
 - **Compile-Time Constants**: `NVapor`, `vapor_id`, `FLX_COR`
 - **Temperature Constant**: `KELVIN`
 
+> **⚠️ CRITICAL BUG WARNING**: The `vapor_id` macro **MUST** be defined with parentheses:
+> ```cpp
+> #define vapor_id (NDUSTFLUIDS-1)  // ✅ CORRECT - parentheses required!
+> ```
+> 
+> **DO NOT** define it without parentheses:
+> ```cpp
+> #define vapor_id NDUSTFLUIDS-1    // ❌ WRONG - will cause subtle bugs!
+> ```
+> 
+> Without parentheses, the macro expansion can cause incorrect operator precedence when used in expressions like `4*vapor_id`, leading to hard-to-debug errors. This bug can be very difficult to track down!
+
 ### 2. Problem Generator Integration (`src/pgen/`)
 
 #### Problem Generator File (e.g., `disk_snowline_2D_RT_erg_2.cpp`)
@@ -496,4 +508,22 @@ The Phase Change module is integrated throughout Athena++ at multiple levels. Th
 ### Issue 5: Restart File Incompatibility
 **Symptom**: Restart file cannot be loaded  
 **Solution**: Restart files store `rho_Np_array`. Ensure same `N_P` and `N_Z` values when restarting
+
+### Issue 6: Incorrect Macro Definition (CRITICAL BUG)
+**Symptom**: Subtle bugs when accessing vapor density, incorrect array indexing, wrong vapor fraction calculations, or mysterious errors in expressions involving `vapor_id`  
+**Root Cause**: Missing parentheses in `vapor_id` macro definition causes incorrect operator precedence  
+**Solution**: 
+```cpp
+// ✅ CORRECT - MUST use parentheses
+#define vapor_id (NDUSTFLUIDS-1)
+
+// ❌ WRONG - Missing parentheses causes operator precedence bugs
+#define vapor_id NDUSTFLUIDS-1
+```
+
+**Why This Matters**: 
+- When you write `4*vapor_id`, without parentheses it expands to `4*NDUSTFLUIDS-1` which evaluates as `(4*NDUSTFLUIDS)-1` instead of `4*(NDUSTFLUIDS-1)`
+- This causes incorrect array indexing and can lead to accessing wrong memory locations or calculating wrong vapor fractions
+- The bug is very difficult to track down because the code may compile and run, but produce incorrect results
+- **Always use parentheses when defining macros that involve arithmetic operations!**
 

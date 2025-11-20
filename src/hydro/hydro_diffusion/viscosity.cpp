@@ -700,7 +700,6 @@ void ConstViscosity(HydroDiffusion *phdif, MeshBlock *pmb, const AthenaArray<Rea
   }
   if (phdif->alpha_disk_model) {
     Real inv_GMroot = 1.0/std::sqrt(phdif->GM);
-    Real gamma = pmb->peos->GetGamma();
     if (NON_BAROTROPIC_EOS) {
       for (int k=ks; k<=ke; ++k) {
         for (int j=js; j<=je; ++j) {
@@ -711,8 +710,13 @@ void ConstViscosity(HydroDiffusion *phdif, MeshBlock *pmb, const AthenaArray<Rea
             const Real &gas_pre = prim(IPR, k, j, i);
             const Real &gas_rho = prim(IDN, k, j, i);
             Real inv_Omega_K = inv_GMroot*std::pow(rad, 1.5);
-            phdif->nu(HydroDiffusion::DiffProcess::alpha, k, j, i) =
-            phdif->alpha_vis*gas_pre/gas_rho*inv_Omega_K;
+            if(GENERAL_EOS) {
+              phdif->nu(HydroDiffusion::DiffProcess::alpha, k, j, i) = phdif->alpha_vis* std::pow(rad/23.64118024, 1.0);
+            } else {
+              Real gamma = pmb->peos->GetGamma();
+              phdif->nu(HydroDiffusion::DiffProcess::alpha, k, j, i) =
+              phdif->alpha_vis*gas_pre/gas_rho*inv_Omega_K;
+            }
           }
         }
       }

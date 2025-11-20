@@ -1,2 +1,7 @@
 /shell_config.sh
+*.o
+DEBUG_*.md
+**/Makefile
+*.json
+/bin/*
 *.log
