@@ -58,7 +58,7 @@ PhaseChange::PhaseChange(MeshBlock *pmb, ParameterInput *pin):
   m_p0_array.NewAthenaArray(N_P);
   
   // Register arrays for restart file I/O (Yu, 2025-11-18)
-  // pmb->RegisterMeshBlockData(rho_Np_array);  // COMMENTED OUT FOR DEBUGGING
+  pmb->RegisterMeshBlockData(rho_Np_array);
 
   // Initialize problem-specific constants from ParameterInput
   Units *punit = pmb->pmy_mesh->punit;
