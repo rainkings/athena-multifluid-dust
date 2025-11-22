@@ -228,7 +228,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
 
   // upper_altitude_damping = 0.04*std::sqrt(cs2_0);
   // lower_altitude_damping = 0.02*std::sqrt(cs2_0);
-  upper_altitude_damping = (x2max-x2min)*0.1;
+  upper_altitude_damping = (x2max-x2min)*0.4;
   lower_altitude_damping = (x2max-x2min)*0.1;
 
   theta_upper_damping = x2min + upper_altitude_damping;
@@ -446,9 +446,10 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
           }
         }
 
-        // Step 3: Calculate stopping time and diffusivity per pebble
+        // Step 3: Calculate gas viscosity, stopping time and diffusivity
         // (Yu, 2025-11-16) Calculate stopping time per pebble following new pattern
-        Real gas_nu = alpha_vis* std::pow(rad/r0, nu_slope);
+        Real &gas_nu = phydro->hdif.nu(HydroDiffusion::DiffProcess::alpha, k, j, i);
+        gas_nu = alpha_vis* std::pow(rad/r0, nu_slope);
         
         if (pphase_change != nullptr) {
           // vapor diffusivity (with artificial decay for outer boundary)
@@ -456,6 +457,9 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
           Real f_decay_art = std::tanh(std::pow((rad-x1max)/w_damp ,2.0)); // outer bc decay
           Real &vapor_diffusivity = pdustfluids->nu_dustfluids_array(vapor_id, k, j, i);
           vapor_diffusivity = gas_nu * f_decay_art;
+
+          Real &st_time_vapor = pdustfluids->stopping_time_array(vapor_id, k, j, i);
+          st_time_vapor = Stokes_number[vapor_id]/omega_dyn;
 
           // Loop over pebbles to calculate stopping time per pebble
           AthenaArray<Real> rho_dustfluid_array_pebble;
@@ -765,7 +769,7 @@ void Mesh::UserWorkInLoop() {
                 Real t_cool = beta / omega_dyn;
                 if (time < t_iterate){
                   // when do iteration for T, rho, don't need long relaxing timescale
-                  t_cool = 10.0/ omega_dyn;
+                  t_cool = 50.0/ omega_dyn;
                 }
                 Real dT = (Tem - Tem0)/t_cool*dt;
                 Tem = Tem0 + dT;
@@ -1169,7 +1173,6 @@ void MeshBlock::UserWorkInLoop(){
         d0_mom2 = d1_vel2*d0_den;
         d0_mom3 = d1_vel3*d0_den;
 
-
         // this is to calculate the temperature for the ghost cells defining boundary conditions
         if(i < is or i > ie or j < js or j > je){
           Real E_kg = 0.5*(SQR(gas_vel1) + SQR(gas_vel2) + SQR(gas_vel3))*gas_den;
@@ -1453,9 +1456,10 @@ void MyStoppingTime(MeshBlock *pmb, const Real time, const AthenaArray<Real> &pr
         Real gas_den = prim(IDN, k, j, i);
         Real Tem = phydro->Tem(k, j, i);
 
-        // vapor stopping time: set to a small value.
+        // vapor stopping time: set to a big value.
+        Real omega_dyn = std::sqrt(gm0/std::pow(rad,3.0));
         Real &vapor_stopping_time = stopping_time(vapor_id, k, j, i);
-        vapor_stopping_time = 1.e-8;
+        vapor_stopping_time = Stokes_number[vapor_id]/omega_dyn;
         
         // Loop over pebbles to calculate stopping time per pebble
         for (int p = 0; p < N_P; ++p) {

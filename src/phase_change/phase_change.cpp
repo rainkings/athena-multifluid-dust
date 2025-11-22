@@ -137,7 +137,7 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
         // Loop over all pebble sizes to collect ice densities and kinetic energies
         for (int p = 0; p < N_P; ++p) {
           int ice_id = N_Z * p;      // ice composition (z=0)
-          int refrac_id = N_Z * p + 1; // refractory composition (z=1)
+          // int refrac_id = N_Z * p + 1; // refractory composition (z=1)
           int rho_id = 4*ice_id;
           int v1_id = rho_id + 1;
           int v2_id = rho_id + 2;
@@ -273,9 +273,12 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
           drho_d_ratio_array(p) = drho_d_max_array(p) / drho_limit;
         }
 
-        // update gas and vapor with total supply
+        // update gas, vapor, and dust with total supply
         rho_g1 = rho_g + drho_limit * sign;
         rho_v1 = rho_v + drho_limit * sign;
+        for (int p = 0; p < N_P; ++p) {
+          rho_d_array1(p) = rho_d_array(p) - drho_limit*sign*drho_d_ratio_array(p);
+        }
         ////////////////////////////////////////////////////////////////
         
         // Update rhoe
