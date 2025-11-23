@@ -1,13 +1,13 @@
   Your Athena++ distribution has now been configured with the following options: 
-  Problem generator:            disk_snowline_2D_RT_erg_2
+  Problem generator:            disk_snowline_2D_RT_erg_2_twopop
   Coordinate system:            spherical_polar
   Equation of state:            general/eos_phase_change
   Riemann solver:               hllc
   Magnetic fields:              OFF
   Number of scalars:            0
   Number of dust fluids:        3
-  Number of pebbles (N_P):      1
-  Number of compositions (N_Z): 2
+  Number of pebbles (N_P):      0
+  Number of compositions (N_Z): 0
   Number of chemical species:   0
   Special relativity:           OFF
   General relativity:           OFF
@@ -24,7 +24,7 @@
   chem_ode_solver:              OFF
   Debug flags:                  OFF
   Code coverage flags:          OFF
-  Linker flags:                  -L/usr/local/hdf5/1.12.1/lib  -lhdf5
+  Linker flags:                  -L/home/izx/bin/hdf5/lib  -lhdf5
   Floating-point precision:     double
   Number of ghost cells:        2
   MPI parallelism:              OFF
@@ -33,4 +33,4 @@
   HDF5 output:                  ON
   HDF5 precision:               double
   Compiler:                     g++
-  Compilation command:          g++  -I/usr/local/hdf5/1.12.1/include -O3 -std=c++11 -fopenmp
+  Compilation command:          g++  -I/home/izx/bin/hdf5/include -O3 -std=c++11 -fopenmp
