@@ -390,6 +390,13 @@ if args['flux'] == 'default':
     else:
         args['flux'] = 'hllc'
 
+#raise SystemExit when eos_phase_change is selected without np and nz 
+#make the warning sentence red 
+if args['eos'] == 'general/eos_phase_change':
+    if args['np'] == '0' or args['nz'] == '0':
+        raise SystemExit('\033[91m' + '### CONFIGURE ERROR: '
+                         + 'eos_phase_change requires --np>0 and --nz>0' + '\033[0m')
+
 # Check Riemann solver compatibility
 if args['flux'] == 'hllc' and args['eos'] == 'isothermal':
     raise SystemExit('### CONFIGURE ERROR: HLLC flux cannot be used with isothermal EOS')

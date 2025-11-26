@@ -59,8 +59,8 @@ class PhaseChange {
       AthenaArray<Real> &cons, AthenaArray<Real> &cons_df, AthenaArray<Real> &cons_s);
   
   // Helper functions to derive m_p and s_p from rho_Np (Yu, 2025-11-18)
-  Real Get_m_p_from_rho_Np(Real rho_I, Real rho_sil, Real rho_Np);
-  Real Get_s_p_from_m_p(Real m_p, Real rho_I, Real rho_sil);
+  Real Get_m_p_from_rho_Np(AthenaArray<Real>rho_comps, Real rho_Np);
+  Real Get_s_p_from_m_p(Real m_p, AthenaArray<Real>rho_comps);
   
   // Calculate stopping time for a pebble (Yu, 2025-11-18)
   Real Get_stopping_time(Units *punit, AthenaArray<Real> rho_d, Real T, Real rho_g, Real rho_v, Real rho_Np);

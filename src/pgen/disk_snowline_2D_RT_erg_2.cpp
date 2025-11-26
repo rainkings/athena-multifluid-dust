@@ -847,7 +847,6 @@ void Mesh::UserWorkInLoop() {
           for (int i=pmb->is; i<=pmb->ie; i++) {
             // (Yu, 2025-11-16) Updated to use PhaseChange module arrays
             // reset q_latent and copy its value to dfv_dt:
-            if (pmb->pphase_change == nullptr) continue;
             pmb->user_out_var(4,k,j,i) = pmb->pphase_change->q_latent(k,j,i);
             pmb->user_out_var(10,k,j,i) = pmb->pphase_change->q_diff(k,j,i);
             pmb->pphase_change->q_latent(k,j,i) = 0.0;

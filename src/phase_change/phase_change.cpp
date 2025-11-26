@@ -68,7 +68,8 @@ PhaseChange::PhaseChange(MeshBlock *pmb, ParameterInput *pin):
   
   // (Yu, 2025-11-18) Convert input parameters from CGS to code units
   for (int p = 0; p < N_P; ++p) {
-    Real m_p0_cgs = pin->GetReal("dust", "m_p0_" + std::to_string(p+1)); // [g]
+    //[25.11.25]lzx: here we should multiply by N_Z to get the correct dust_id 
+    Real m_p0_cgs = pin->GetReal("dust", "m_p0_" + std::to_string(p*N_Z+1)); // [g]
     m_p0_array(p) = m_p0_cgs / punit->code_mass_cgs; // Convert to code units
   }
   
@@ -172,6 +173,11 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
         Real fv = rho_v/rho_g;
         Real fv0 = fv;
 
+        // if (i==2 && j==2) {
+        //   // Debug output for the first cell
+        //   std::cout << "Initial: rho_g=" << rho_g << ", rho_v=" << rho_v << ", fv=" << fv << std::endl;
+        // }
+        //
         // Check for NaN
         if(std::isnan(fv) || (fv < 0.0) || std::isnan(gas_mom1) || std::isnan(gas_erg)){
           std::stringstream msg;
@@ -201,6 +207,14 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
         Real rhoe, rhoe1;
         rho_g1 = rho_g;
 
+        if (std::isnan(rho_d_array(1))) {
+          std::cout << "rho_d_array(1)=" << rho_d_array(1) << std::endl; 
+          std::cout << "cons_df(8,k,j,i)=" << cons_df(8,k,j,i) << std::endl;
+          std::cout << "cons_df(0,k,j,i)=" << cons_df(0,k,j,i) << std::endl;
+          std::cout << "k=" << k << ", j=" << j << ", i=" << i << std::endl;
+          std::stringstream msg;
+        }
+
         // First calculation of phase change
         rhoe = Get_rhoe(rhoE_total, rho_g, E_kg, rho_d_array, E_kd_array);
         phase_trans(rhoe, rho_g, rho_d_array, rho_v, drho);
@@ -217,32 +231,47 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
 
         ////////////////////////////////////////////////////////////////
         // Compute per-pebble rates
+        AthenaArray<Real> rho_comps;
+        rho_comps.NewAthenaArray(N_Z); // +1 for vapor
         for (int p = 0; p < N_P; ++p) {
-          int ice_id = N_Z * p;      // ice composition (z=0)
-          int refrac_id = N_Z * p + 1; // refractory composition (z=1)
-          Real rho_I_p = cons_df(4*ice_id, k, j, i);
-          Real rho_sil_p = cons_df(4*refrac_id, k, j, i);
-          
+          //
+          for (int z = 0; z < N_Z; ++z) {
+            Real dust_rho_id = N_Z * p + z;
+            rho_comps(z) = cons_df(4*dust_rho_id, k, j, i);
+          }
+
           // update rho_Np for pebble p
           Real &rho_Np_p = rho_Np_array(p, k, j, i);
-          rho_Np_p = rho_sil_p/(1.0 - f_ICE_inter0_)/m_p0_array(p); // [code_number_density]
+          Real rho_refrac = rho_comps(rho_comps.GetDim1() - 1); // refractory (always the last one)
+          rho_Np_p = rho_refrac/(1.0 - f_ICE_inter0_)/m_p0_array(p); // [code_number_density]
           
           // Derive m_p and s_p from rho_Np and current densities (Yu, 2025-11-18)
-          Real m_p = Get_m_p_from_rho_Np(rho_I_p, rho_sil_p, rho_Np_p); // [code_mass]
-          Real s_p = Get_s_p_from_m_p(m_p, rho_I_p, rho_sil_p); // [code_length]
+          Real m_p = Get_m_p_from_rho_Np(rho_comps, rho_Np_p); // [code_mass]
+          Real s_p = Get_s_p_from_m_p(m_p, rho_comps); // [code_length]
           
           drhodt_ice_arr(p) = GetSublimationRate(Tem, rho_v, s_p, rho_Np_p);
         }
+        // if (drhodt_ice_arr(1) < drhodt_ice_arr(0)){
+        //   std::cout << "drhodt_ice_arr(0)=" << drhodt_ice_arr(0) << std::endl;
+        //   std::cout << "drhodt_ice_arr(1)=" << drhodt_ice_arr(1) << std::endl;
+        //   std::cout << "s_p(0)=" << Get_s_p_from_m_p(Get_m_p_from_rho_Np(rho_comps, rho_Np_array(0,k,j,i)), rho_comps) << std::endl;
+        //   std::cout << "s_p(1)=" << Get_s_p_from_m_p(Get_m_p_from_rho_Np(rho_comps, rho_Np_array(1,k,j,i)), rho_comps) << std::endl;
+        //   std::stringstream msg;
+        // }
 
         // calculate drho limited by phase change and material amount
         Real drho_limit = 0.0;
+        Real avail_p = 0.0;
 
         if (sign > 0.0) {
           for (int p = 0; p < N_P; ++p) {
             Real cap_p = 0.0;
             Real rate_p = std::fabs(drhodt_ice_arr(p)) * dt; // sublimation limit
-            Real avail_p = rho_d_array(p) - dffloor_; // material limit
-            avail_p = (avail_p < 1.e-21) ? 1.e-21 : avail_p;
+            avail_p = rho_d_array(p) - dffloor_; // material limit
+            // if (avail_p < 0.0){
+            //   return;
+            // }
+            avail_p = (avail_p < 1e-100) ? 1e-100 : avail_p;
 
             cap_p = (rate_p > avail_p) ? avail_p : rate_p;
             drho_d_max_array(p) = cap_p; // how much sublimation could happen for pebble p
@@ -258,7 +287,7 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
           }
 
           Real avail_v = rho_v - dffloor_;
-          avail_v = (avail_v < 1.e-21) ? 1.e-21 : avail_v;
+          avail_v = (avail_v < 1.e-100) ? 1.e-100 : avail_v;
 
           Real norm_factor = (drho_limit > avail_v) ? (avail_v / drho_limit) : 1.0;
           for (int p = 0; p < N_P; ++p) {
@@ -278,6 +307,13 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
         rho_v1 = rho_v + drho_limit * sign;
         for (int p = 0; p < N_P; ++p) {
           rho_d_array1(p) = rho_d_array(p) - drho_limit*sign*drho_d_ratio_array(p);
+          // if (i==2 && j==2) {
+          //   // Debug output for the first cell
+          //   std::cout << "Pebble " << p << ": drho_d_ratio_array = " << drho_d_ratio_array(p) << std::endl;
+          // }
+          if (rho_d_array1(p) < 0.0) {
+            rho_d_array1(p) = dffloor_;
+          }
         }
         ////////////////////////////////////////////////////////////////
         
@@ -417,6 +453,11 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
         Real prs = rho_g*Tem/(mu1*KELVIN);
         // Use calc_gamma for general EOS, GetGamma for adiabatic EOS (Yu, 2025-11-18)
         Real gamma;
+        if (std::isnan(fv)){
+          std::stringstream msg;
+          msg << "### FATAL ERROR in PhaseChange::PhaseChangeSource" << std::endl
+              << "fv= nan" << std::endl;
+        }
         gamma = pmb->peos->calc_gamma(fv);
 
         // Update gas energy and momentum
@@ -527,6 +568,9 @@ void PhaseChange::phase_trans(Real rhoe, Real rho_g, const AthenaArray<Real> &rh
   Real T = Get_T_rhoe(rhoe, rho_g, rho_I, rho_v/rho_g);
   Real rhoz = Get_Z(rho_g, T);
   drho = rhoz - rho_v;
+  if (std::isnan(drho)) {
+    std::stringstream msg;
+  }
   return;
 }
 
@@ -550,11 +594,17 @@ Real PhaseChange::GetSublimationRate(Real Tem, Real rho_v,
 //! Helper function: Derive pebble mass from number density (Yu, 2025-11-18)
 //! m_p = (rho_I + rho_sil) / rho_Np
 
-Real PhaseChange::Get_m_p_from_rho_Np(Real rho_I, Real rho_sil, Real rho_Np) {
+Real PhaseChange::Get_m_p_from_rho_Np(AthenaArray<Real> rho_comps, Real rho_Np) {
   if (rho_Np <= 0.0) {
     return 0.0; // Avoid division by zero
   }
-  return (rho_I + rho_sil) / rho_Np;
+  Real rho_total = 0.0; 
+  for (int z = 0; z < rho_comps.GetDim1(); ++z) {
+    rho_total += rho_comps(z);
+  }
+  // Real rho_I = rho_comps(0);      // ice (z=0) 
+  // Real rho_sil = rho_comps(1);    // refractory (z=1)
+  return  rho_total/ rho_Np;
 }
 
 //----------------------------------------------------------------------------------------
@@ -562,10 +612,13 @@ Real PhaseChange::Get_m_p_from_rho_Np(Real rho_I, Real rho_sil, Real rho_Np) {
 //! s_p = (m_p / (4/3 * pi * rho_p_inter))^(1/3)
 //! where rho_p_inter is the internal density of the pebble (mixture of ice and silicate)
 
-Real PhaseChange::Get_s_p_from_m_p(Real m_p, Real rho_I, Real rho_sil) {
+Real PhaseChange::Get_s_p_from_m_p(Real m_p, AthenaArray<Real> rho_comps) {
   if (m_p <= 0.0) {
     return 0.0; // Avoid division by zero
   }
+
+  Real rho_I = rho_comps(0);      // ice (z=0) 
+  Real rho_sil = rho_comps(1);    // refractory (z=1)
   
   // Calculate mass fractions
   Real rho_total = rho_I + rho_sil;
