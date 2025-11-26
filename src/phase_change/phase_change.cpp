@@ -207,14 +207,6 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
         Real rhoe, rhoe1;
         rho_g1 = rho_g;
 
-        if (std::isnan(rho_d_array(1))) {
-          std::cout << "rho_d_array(1)=" << rho_d_array(1) << std::endl; 
-          std::cout << "cons_df(8,k,j,i)=" << cons_df(8,k,j,i) << std::endl;
-          std::cout << "cons_df(0,k,j,i)=" << cons_df(0,k,j,i) << std::endl;
-          std::cout << "k=" << k << ", j=" << j << ", i=" << i << std::endl;
-          std::stringstream msg;
-        }
-
         // First calculation of phase change
         rhoe = Get_rhoe(rhoE_total, rho_g, E_kg, rho_d_array, E_kd_array);
         phase_trans(rhoe, rho_g, rho_d_array, rho_v, drho);
@@ -311,9 +303,6 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
           //   // Debug output for the first cell
           //   std::cout << "Pebble " << p << ": drho_d_ratio_array = " << drho_d_ratio_array(p) << std::endl;
           // }
-          if (rho_d_array1(p) < 0.0) {
-            rho_d_array1(p) = dffloor_;
-          }
         }
         ////////////////////////////////////////////////////////////////
         
