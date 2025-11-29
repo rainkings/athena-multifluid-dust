@@ -16,7 +16,7 @@
 // configure.py dict(definitions) string values:
 
 // problem generator
-#define PROBLEM_GENERATOR "disk_snowline_2D_RT_erg_2"
+#define PROBLEM_GENERATOR "disk_SI_ice_spherical"
 
 // coordinate system
 #define COORDINATE_SYSTEM "spherical_polar"
@@ -124,10 +124,10 @@
 #define NHYDRO 5
 #define NFIELD 0
 #define NWAVE 5
-#define NDUSTFLUIDS 3    // N dust species
-#define NDUSTVARS (3*4)  // 4*N dust variables
-#define NDUSTGAS  (3+1)  // N dust + 1 gas
-#define N_P 1                // number of pebble sizes (phase change module)
+#define NDUSTFLUIDS 11    // N dust species
+#define NDUSTVARS (11*4)  // 4*N dust variables
+#define NDUSTGAS  (11+1)  // N dust + 1 gas
+#define N_P 5                // number of pebble sizes (phase change module)
 #define N_Z 2           // number of compositions per pebble (phase change module)
 #define NSCALARS 0
 #define NSPECIES 0

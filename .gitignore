@@ -5,3 +5,5 @@ DEBUG_*.md
 *.json
 /bin/*
 *.log
+.*
+

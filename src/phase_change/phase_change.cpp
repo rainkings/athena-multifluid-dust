@@ -136,8 +136,8 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
 
         // Loop over all pebble sizes to collect ice densities and kinetic energies
         for (int p = 0; p < N_P; ++p) {
-          int ice_id = N_Z * p;      // ice composition (z=0)
-          // int refrac_id = N_Z * p + 1; // refractory composition (z=1)
+          int ice_id = GetIceDustId(p);      // ice composition (z=0)
+          // int refrac_id = GetRefracDustId(p); // refractory composition (z=1)
           int rho_id = 4*ice_id;
           int v1_id = rho_id + 1;
           int v2_id = rho_id + 2;
@@ -178,7 +178,8 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
           msg << "### FATAL ERROR in PhaseChange::PhaseChangeSource" << std::endl
               << "NaN detected: fv = " << fv << ", gas_mom1 = " << gas_mom1
               << ", gas_erg = " << gas_erg << std::endl;
-          ATHENA_ERROR(msg);
+          std::cerr << msg.str();
+          std::exit(EXIT_FAILURE);
         }
 
         // Initialize arrays
@@ -218,8 +219,8 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
         ////////////////////////////////////////////////////////////////
         // Compute per-pebble rates
         for (int p = 0; p < N_P; ++p) {
-          int ice_id = N_Z * p;      // ice composition (z=0)
-          int refrac_id = N_Z * p + 1; // refractory composition (z=1)
+          int ice_id = GetIceDustId(p);      // ice composition (z=0)
+          int refrac_id = GetRefracDustId(p); // refractory composition (z=1)
           Real rho_I_p = cons_df(4*ice_id, k, j, i);
           Real rho_sil_p = cons_df(4*refrac_id, k, j, i);
           
@@ -369,7 +370,8 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
                 std::stringstream msg;
                 msg << "### FATAL ERROR in PhaseChange::PhaseChangeSource" << std::endl
                     << "Bisection iteration > 1000" << std::endl;
-                ATHENA_ERROR(msg);
+                std::cout << msg.str();
+                break;
               }
               
               rho_mid = (rho_left + rho_right)/2.0;
@@ -406,7 +408,7 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
 
         // Update ice densities for all pebble sizes
         for (int p = 0; p < N_P; ++p) {
-          int ice_id = N_Z * p;      // ice composition (z=0)
+          int ice_id = GetIceDustId(p);      // ice composition (z=0)
           int rho_id = 4*ice_id;
           cons_df(rho_id, k, j, i) = rho_d_array(p);
         }
@@ -427,7 +429,7 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
         
         // Update ice momenta for all pebble sizes
         for (int p = 0; p < N_P; ++p) {
-          int ice_id = N_Z * p;      // ice composition (z=0)
+          int ice_id = GetIceDustId(p);      // ice composition (z=0)
           int rho_id = 4*ice_id;
           int v1_id = rho_id + 1;
           int v2_id = rho_id + 2;

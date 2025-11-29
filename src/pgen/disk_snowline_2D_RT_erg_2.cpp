@@ -437,7 +437,7 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
         // Step 2: Initialize rho_Np_array after dust densities are set
         if (pphase_change != nullptr && N_Z > 0) {
           for (int p = 0; p < N_P; ++p) {
-            int refrac_id = N_Z * p + 1; // refractory composition (z=1)
+            int refrac_id = GetRefracDustId(p); // refractory composition (z=1)
             int rho_id = 4*refrac_id;
             Real rho_sil_p = pdustfluids->df_u(rho_id, k, j, i); // [code_density]
             // Calculate initial rho_Np from refractory density (all in code units)
@@ -1138,40 +1138,41 @@ void MeshBlock::UserWorkInLoop(){
         dust_mom2 = dust_den*gas_vel2;
         dust_mom3 = dust_den*gas_vel3;
 
-        // copy refractory velocity to ice
-        // refractory
-        dust_id = 1;
-        rho_id  = 4*dust_id;
-        v1_id   = rho_id + 1;
-        v2_id   = rho_id + 2;
-        v3_id   = rho_id + 3;
-        
-        const Real &d1_vel1 = pdustfluids->df_w(v1_id,  k, j, i);
-        const Real &d1_vel2 = pdustfluids->df_w(v2_id,  k, j, i);
-        const Real &d1_vel3 = pdustfluids->df_w(v3_id,  k, j, i);
-        
-        // ice
-        dust_id = 0;
-        rho_id  = 4*dust_id;
-        v1_id   = rho_id + 1;
-        v2_id   = rho_id + 2;
-        v3_id   = rho_id + 3;
-        
-        Real &d0_vel1 = pdustfluids->df_w(v1_id,  k, j, i);
-        Real &d0_vel2 = pdustfluids->df_w(v2_id,  k, j, i);
-        Real &d0_vel3 = pdustfluids->df_w(v3_id,  k, j, i);
+        // copy refractory velocity to ice for each pebble
+        for (int p = 0; p < N_P; ++p) {
+          int refrac_id = GetRefracDustId(p);
+          int ice_id = GetIceDustId(p);
 
-        const Real &d0_den  = pdustfluids->df_u(rho_id, k, j, i);
-        Real &d0_mom1 = pdustfluids->df_u(v1_id,  k, j, i);
-        Real &d0_mom2 = pdustfluids->df_u(v2_id,  k, j, i);
-        Real &d0_mom3 = pdustfluids->df_u(v3_id,  k, j, i);
+          int refrac_rho_id  = 4*refrac_id;
+          int refrac_v1_id   = refrac_rho_id + 1;
+          int refrac_v2_id   = refrac_rho_id + 2;
+          int refrac_v3_id   = refrac_rho_id + 3;
+          
+          const Real &d1_vel1 = pdustfluids->df_w(refrac_v1_id,  k, j, i);
+          const Real &d1_vel2 = pdustfluids->df_w(refrac_v2_id,  k, j, i);
+          const Real &d1_vel3 = pdustfluids->df_w(refrac_v3_id,  k, j, i);
+          
+          int ice_rho_id  = 4*ice_id;
+          int ice_v1_id   = ice_rho_id + 1;
+          int ice_v2_id   = ice_rho_id + 2;
+          int ice_v3_id   = ice_rho_id + 3;
+          
+          Real &d0_vel1 = pdustfluids->df_w(ice_v1_id,  k, j, i);
+          Real &d0_vel2 = pdustfluids->df_w(ice_v2_id,  k, j, i);
+          Real &d0_vel3 = pdustfluids->df_w(ice_v3_id,  k, j, i);
 
-        d0_vel1 = d1_vel1;
-        d0_vel2 = d1_vel2;
-        d0_vel3 = d1_vel3;
-        d0_mom1 = d1_vel1*d0_den;
-        d0_mom2 = d1_vel2*d0_den;
-        d0_mom3 = d1_vel3*d0_den;
+          const Real &d0_den  = pdustfluids->df_u(ice_rho_id, k, j, i);
+          Real &d0_mom1 = pdustfluids->df_u(ice_v1_id,  k, j, i);
+          Real &d0_mom2 = pdustfluids->df_u(ice_v2_id,  k, j, i);
+          Real &d0_mom3 = pdustfluids->df_u(ice_v3_id,  k, j, i);
+
+          d0_vel1 = d1_vel1;
+          d0_vel2 = d1_vel2;
+          d0_vel3 = d1_vel3;
+          d0_mom1 = d1_vel1*d0_den;
+          d0_mom2 = d1_vel2*d0_den;
+          d0_mom3 = d1_vel3*d0_den;
+        }
 
         // this is to calculate the temperature for the ghost cells defining boundary conditions
         if(i < is or i > ie or j < js or j > je){
@@ -1224,12 +1225,14 @@ void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin){
         // output
         user_out_var(0,k,j,i) = phydro->Tem(k,j,i);
         // user_out_var(1,k,j,i) = prs/rhoe_g + 1.0;
-        user_out_var(1,k,j,i) = pdustfluids->stopping_time_array(0,k,j,i);
+        int pebble0_ice_id = GetIceDustId(0);
+        int pebble0_refrac_id = GetRefracDustId(0);
+        user_out_var(1,k,j,i) = pdustfluids->stopping_time_array(pebble0_ice_id,k,j,i);
         // user_out_var(1,k,j,i) = phydro->hdif.kappa(HydroDiffusion::DiffProcess::aniso, k, j, i);
         if (pphase_change != nullptr && N_P > 0) {
           Real rho_Np = pphase_change->rho_Np_array(0, k, j, i); // [code_number_density]
-          Real rho_I = pdustfluids->df_w(4*0, k, j, i); // ice for pebble 0 [code_density]
-          Real rho_sil = pdustfluids->df_w(4*1, k, j, i); // refractory for pebble 0 [code_density]
+          Real rho_I = pdustfluids->df_w(4*pebble0_ice_id, k, j, i); // ice for pebble 0 [code_density]
+          Real rho_sil = pdustfluids->df_w(4*pebble0_refrac_id, k, j, i); // refractory for pebble 0 [code_density]
           Real m_p = pphase_change->Get_m_p_from_rho_Np(rho_I, rho_sil, rho_Np); // [code_mass]
           Real s_p = pphase_change->Get_s_p_from_m_p(m_p, rho_I, rho_sil); // [code_length]
           Units *punit = pmy_mesh->punit;
@@ -1237,8 +1240,8 @@ void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin){
         }
         // user_out_var(4,k,j,i) = pdustfluids->dfv_dt(k,j,i);
         
-        user_out_var(6,k,j,i) = pdustfluids->df_flux[X1DIR](0,k,j,i);
-        user_out_var(7,k,j,i) = pdustfluids->df_flux[X2DIR](0,k,j,i);
+        user_out_var(6,k,j,i) = pdustfluids->df_flux[X1DIR](pebble0_ice_id,k,j,i);
+        user_out_var(7,k,j,i) = pdustfluids->df_flux[X2DIR](pebble0_ice_id,k,j,i);
         user_out_var(8,k,j,i) = pdustfluids->df_flux[X1DIR](4*(vapor_id),k,j,i);
         user_out_var(9,k,j,i) = pdustfluids->df_flux[X2DIR](4*(vapor_id),k,j,i);
         user_out_var(11,k,j,i) = phydro->flux[X1DIR](IDN,k,j,i);
@@ -1539,7 +1542,7 @@ void MyDustDiffusivity(DustFluids *pdf, MeshBlock *pmb,
         // Loop over pebbles to calculate diffusivity per pebble
         for (int p = 0; p < N_P; ++p) {
           // Get stopping time for this pebble (all compositions have same stopping time)
-          int dust_id_first = N_Z * p; // first composition of pebble p
+          int dust_id_first = GetRefracDustId(p); // first composition of pebble p
           Real t_stop = stopping_time(dust_id_first, k, j, i);
           
           // Calculate diffusivity for all compositions of this pebble
@@ -2072,10 +2075,11 @@ void DiskOuterX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
           quick_exit(1);
         }
         
-        if (NON_BAROTROPIC_EOS)
+        if (NON_BAROTROPIC_EOS){
           // extrapolated pressure
           gas_pres_ghost = std::exp(2.0*std::log(prim(IPR, k, j, iu+i-1)) - std::log(prim(IPR, k, j, iu+i-2)));
           gas_pres_ghost = std::max(gas_pres_ghost, pfloor);
+        }
 
         if (NDUSTFLUIDS > 0) {
           for (int n=0; n<NDUSTFLUIDS; ++n) {

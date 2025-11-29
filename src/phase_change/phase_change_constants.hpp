@@ -51,6 +51,15 @@ constexpr Real sigma_mol_cgs = 2.e-15;
 #define        vapor_id  (NDUSTFLUIDS-1)  // last dust fluid as vapor. must have this parenthesis when defining!
 #define        FLX_COR   1
 
+// Helpers to retrieve composition-specific dust IDs for pebble p
+inline constexpr int GetIceDustId(int pebble_idx) {
+  return N_Z * pebble_idx;
+}
+
+inline constexpr int GetRefracDustId(int pebble_idx) {
+  return N_Z * pebble_idx + 1;
+}
+
 
 #endif // PHASE_CHANGE_CONSTANTS_DEFINED
 

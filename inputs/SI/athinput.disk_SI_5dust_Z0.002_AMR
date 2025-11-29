@@ -1,10 +1,10 @@
 <comment>
-problem   = VSI and SI and RWI in spherical polar coordinates
+problem   = VSI/SI with phase-change pebbles (spherical polar)
 reference =
-configure = --prob=disk_VSI --coord=spherical_polar
+configure = --prob=disk_SI_ice_spherical --coord=spherical_polar --np=5 --nz=2
 
 <job>
-problem_id  = VSI      # problem ID: basename of output filenames
+problem_id  = SI_ice      # problem ID: basename of output filenames
 
 <output1>
 file_type      = hst               # History data dump
@@ -175,6 +175,7 @@ qvalue    = -0.5
 pvalue    = -2.25
 amp       = 0.01
 out_level = 0         # Physical level
+f_ICE_inter0 = 0.5    # initial ice mass fraction per pebble
 
 Isothermal_Flag           = 0
 Inner_Gas_Damping_Flag    = 0
@@ -217,27 +218,38 @@ dust_xorder             = 2
 time_drag               = 0.0
 dust_percent_floor      = 1e-4
 
+# pebble properties
 dffloor_1              = 1e-11
 initial_D2G_1          = 0.002
 Stokes_number_1        = 0.1
 Hratio_1               = 0.1
+m_p0_1                 = 1.0
 
 dffloor_2              = 1e-11
 initial_D2G_2          = 0.002
 Stokes_number_2        = 0.03
 Hratio_2               = 0.1
+m_p0_2                 = 3.0e-1
 
 dffloor_3              = 1e-11
 initial_D2G_3          = 0.002
 Stokes_number_3        = 0.01
 Hratio_3               = 0.1
+m_p0_3                 = 1.0e-1
 
 dffloor_4              = 1e-11
 initial_D2G_4          = 0.002
 Stokes_number_4        = 0.003
 Hratio_4               = 0.1
+m_p0_4                 = 3.0e-2
 
 dffloor_5              = 1e-11
 initial_D2G_5          = 0.002
 Stokes_number_5        = 0.001
 Hratio_5               = 0.1
+m_p0_5                 = 1.0e-2
+
+# vapor tracer parameters (used by phase-change module)
+initial_D2G_vapor      = 0.0
+Stokes_number_vapor    = 1.0e-6
+Hratio_vapor           = 1.0
