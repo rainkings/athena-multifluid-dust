@@ -254,16 +254,18 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
         // calculate drho limited by phase change and material amount
         Real drho_limit = 0.0;
         Real avail_p = 0.0;
+        Real avail_v = 0.0;
+        Real minimum = 1e-308; 
 
         if (sign > 0.0) {
           for (int p = 0; p < N_P; ++p) {
             Real cap_p = 0.0;
             Real rate_p = std::fabs(drhodt_ice_arr(p)) * dt; // sublimation limit
             avail_p = rho_d_array(p) - dffloor_; // material limit
-            // if (avail_p < 0.0){
-            //   return;
+            // if (avail_p <= minimum) {
+            //   continue; // no material available for sublimation
             // }
-            avail_p = (avail_p < 1e-100) ? 1e-100 : avail_p;
+            avail_p = (avail_p < minimum) ? minimum : avail_p;
 
             cap_p = (rate_p > avail_p) ? avail_p : rate_p;
             drho_d_max_array(p) = cap_p; // how much sublimation could happen for pebble p
@@ -278,8 +280,11 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
             drho_d_max_array(p) = cap_p; // how much condensation could happen for pebble p
           }
 
-          Real avail_v = rho_v - dffloor_;
-          avail_v = (avail_v < 1.e-100) ? 1.e-100 : avail_v;
+          avail_v = rho_v - dffloor_;
+          // if (avail_v <= minimum) {
+          //   avail_v = 0.0;
+          // }
+          avail_v = (avail_v < minimum) ? minimum : avail_v;
 
           Real norm_factor = (drho_limit > avail_v) ? (avail_v / drho_limit) : 1.0;
           for (int p = 0; p < N_P; ++p) {
@@ -287,12 +292,25 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
           }
           drho_limit *= norm_factor;
         }
-
         // fix the ratio when conducting root finding
         // This could be improved by updating the ratio in the root finding process, but keep it flexible for now.
         for (int p = 0; p < N_P; ++p) {
           drho_d_ratio_array(p) = drho_d_max_array(p) / drho_limit;
         }
+
+        // No use.
+        // bool allZero = true; 
+        // for (int p = 0; p < N_P; ++p) {
+        //   if (drho_d_max_array(p) > 1.e-21) {
+        //     allZero = false;
+        //     break;
+        //   }
+        // }
+        // if (allZero) {
+        //   for ( int p = 0; p < N_P; ++p) {
+        //     drho_d_ratio_array(p) = 0.0;
+        //   }
+        // }
 
         // update gas, vapor, and dust with total supply
         rho_g1 = rho_g + drho_limit * sign;
@@ -303,6 +321,13 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
           //   // Debug output for the first cell
           //   std::cout << "Pebble " << p << ": drho_d_ratio_array = " << drho_d_ratio_array(p) << std::endl;
           // }
+        }
+        if (std::isnan(rho_d_array1(0))){
+          std::cout << "drho_limit = " << drho_limit << std::endl;
+          std::cout << "sign = " << sign << std::endl;
+          std::cout << "rho_d_array(1) = " << rho_d_array(1) << std::endl;
+          std::cout << "drho_d_ratio_array(1) = " << drho_d_ratio_array(1) << std::endl;
+          std::cout << "rho_d_array1(1) = " << rho_d_array1(1) << std::endl;
         }
         ////////////////////////////////////////////////////////////////
         

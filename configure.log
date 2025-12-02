@@ -5,8 +5,8 @@
   Riemann solver:               hllc
   Magnetic fields:              OFF
   Number of scalars:            0
-  Number of dust fluids:        3
-  Number of pebbles (N_P):      1
+  Number of dust fluids:        5
+  Number of pebbles (N_P):      2
   Number of compositions (N_Z): 2
   Number of chemical species:   0
   Special relativity:           OFF

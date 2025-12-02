@@ -889,20 +889,20 @@ void Mesh::UserWorkInLoop() {
                   // when do iteration for T, rho, don't need long relaxing timescale
                   t_cool = 50.0/ omega_dyn;
                 } 
-                else{
-                  // Lin & Youdin 2015:
-                  Real C_v = ((0.71*2.5 / mu_H2 + 0.29*1.5/ mu_He)*(1.0-fv) + 3.0/mu_z*fv) /KELVIN; // in unit of k_B/m_H
-                  // Real l_char = rad * l_cool; // characteristic pertubation scale
-                  Real l_char = rad * std::pow(rad/r0, qvalue/2.0 + 1.5); //code unit 
-                  Real kappa_dg_R = Get_kappa(0.0, fv); //code unit
-                  Real UNIT_SB = punit->code_energydensity_cgs * punit->code_velocity_cgs; // flx/(K^4)
-                  Real tau_relax = C_v * omega_dyn / (16.0 * Constants::sigma_cgs/UNIT_SB * std::pow(Tem,3.0)) * (1.0 /kappa_dg_R + 3.0*SQR(l_char*rho_gas)*kappa_dg_R);
-                  Real H_gas = std::pow(rad/r0, qvalue/2.0 + 1.5);
-                  // t_cool = Get_thermal_relaxation_time(omega_dyn, Tem, rhokappa(tk,tj,ti), rho_peb, rho_gas, H_gas, z, rad);
-                  // t_cool /= omega_dyn;
-                  t_cool = tau_relax/omega_dyn/punit->code_time_cgs;
-                }
-
+                // else{
+                //   // Lin & Youdin 2015:
+                //   Real C_v = ((0.71*2.5 / mu_H2 + 0.29*1.5/ mu_He)*(1.0-fv) + 3.0/mu_z*fv) /KELVIN; // in unit of k_B/m_H
+                //   // Real l_char = rad * l_cool; // characteristic pertubation scale
+                //   Real l_char = rad * std::pow(rad/r0, qvalue/2.0 + 1.5); //code unit 
+                //   Real kappa_dg_R = Get_kappa(0.0, fv); //code unit
+                //   Real UNIT_SB = punit->code_energydensity_cgs * punit->code_velocity_cgs; // flx/(K^4)
+                //   Real tau_relax = C_v * omega_dyn / (16.0 * Constants::sigma_cgs/UNIT_SB * std::pow(Tem,3.0)) * (1.0 /kappa_dg_R + 3.0*SQR(l_char*rho_gas)*kappa_dg_R);
+                //   Real H_gas = std::pow(rad/r0, qvalue/2.0 + 1.5);
+                //   // t_cool = Get_thermal_relaxation_time(omega_dyn, Tem, rhokappa(tk,tj,ti), rho_peb, rho_gas, H_gas, z, rad);
+                //   // t_cool /= omega_dyn;
+                //   t_cool = tau_relax/omega_dyn/punit->code_time_cgs;
+                // }
+                //
                 Real dT = (Tem - Tem0)/t_cool*dt;
                 Tem = Tem0 + dT;
                 //////////////////////////////////////
@@ -1743,6 +1743,7 @@ void MyConductivity(HydroDiffusion *phdif, MeshBlock *pmb,
         kappa_heat = 1.0/(3.0*kappa_R*gas_rho)* 16.0* (Constants::sigma_cgs/UNIT_SB) *SQR(Tem)*Tem*f_decay;
         Real UNIT_kappa = punit->code_length_cgs*punit->code_velocity_cgs; // kappa_heat [code_length^2/code_time] 
         kappa_heat /= UNIT_kappa;
+        // kappa_heat = 0.0;
       }
     }
   }
