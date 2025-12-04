@@ -78,7 +78,7 @@ class PhaseChange {
   Real rho_ice_inter_;
   Real dfloor_, dffloor_;  // density floors (from problem)
   
-  // Helper functions for phase change calculation
+  // Helper funt_stopctions for phase change calculation
   Real Get_T_rhoe(Real rhoe, Real rho_g, const AthenaArray<Real> &rho_d_array, Real fv);
   Real Get_rhomu_d(const AthenaArray<Real> &rho_d_array);
   Real Get_rhoe(Real rhoE_total, Real rho_g, Real E_kg,
