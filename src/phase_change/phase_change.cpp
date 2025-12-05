@@ -237,13 +237,14 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
 
         // calculate drho limited by phase change and material amount
         Real drho_limit = 0.0;
+        Real floor_supply = 0.0;
 
         if (sign > 0.0) {
           for (int p = 0; p < N_P; ++p) {
             Real cap_p = 0.0;
             Real rate_p = std::fabs(drhodt_ice_arr(p)) * dt; // sublimation limit
             Real avail_p = rho_d_array(p) - dffloor_; // material limit
-            avail_p = (avail_p < 1.e-21) ? 1.e-21 : avail_p;
+            avail_p = (avail_p < floor_supply) ? floor_supply : avail_p;
 
             cap_p = (rate_p > avail_p) ? avail_p : rate_p;
             drho_d_max_array(p) = cap_p; // how much sublimation could happen for pebble p
@@ -259,7 +260,7 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
           }
 
           Real avail_v = rho_v - dffloor_;
-          avail_v = (avail_v < 1.e-21) ? 1.e-21 : avail_v;
+          avail_v = (avail_v < floor_supply) ? floor_supply : avail_v;
 
           Real norm_factor = (drho_limit > avail_v) ? (avail_v / drho_limit) : 1.0;
           for (int p = 0; p < N_P; ++p) {
@@ -270,8 +271,14 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
 
         // fix the ratio when conducting root finding
         // This could be improved by updating the ratio in the root finding process, but keep it flexible for now.
-        for (int p = 0; p < N_P; ++p) {
-          drho_d_ratio_array(p) = drho_d_max_array(p) / drho_limit;
+        if (drho_limit > 0.0) {
+          for (int p = 0; p < N_P; ++p) {
+            drho_d_ratio_array(p) = drho_d_max_array(p) / drho_limit;
+          }
+        } else {
+          for (int p = 0; p < N_P; ++p) {
+            drho_d_ratio_array(p) = 0.0;
+          }
         }
 
         // update gas, vapor, and dust with total supply
