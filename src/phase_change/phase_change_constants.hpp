@@ -49,7 +49,7 @@ constexpr Real sigma_mol_cgs = 2.e-15;
 // number of vapor species
 #define        NVapor    1  // (Yu) only one vapor is allowed now.
 #define        vapor_id  (NDUSTFLUIDS-1)  // last dust fluid as vapor. must have this parenthesis when defining!
-#define        FLX_COR   1
+#define        FLX_COR   0
 
 // Helpers to retrieve composition-specific dust IDs for pebble p
 inline constexpr int GetIceDustId(int pebble_idx) {

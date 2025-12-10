@@ -18,6 +18,7 @@
 // Athena++ headers
 #include "../athena.hpp"
 #include "../athena_arrays.hpp"
+#include <src/defs.hpp>
 
 // Forward declarations
 class MeshBlock;
@@ -46,6 +47,7 @@ class PhaseChange {
   AthenaArray<Real> rho_Np_array;  // pebble number density array [1/cm^3] (Yu, 2025-11-18: replaced m_p_array and s_p_array)
   AthenaArray<Real> q_latent;      // latent heat absorption/release rate [code unit]
   AthenaArray<Real> m_p0_array;    // initial pebble mass array [g] (used to initialize rho_Np)
+  AthenaArray<Real> f_inter_ice_array; // internal ice mass fraction array
 
   // this is for heat conduction
   AthenaArray<Real> q_diff;      // heat conduction rate [code unit]
@@ -73,7 +75,6 @@ class PhaseChange {
   
   // Problem-specific constants (initialized from ParameterInput)
   Real min_tol_;
-  Real f_ICE_inter0_;
   Real rho_sil_inter_;
   Real rho_ice_inter_;
   Real dfloor_, dffloor_;  // density floors (from problem)

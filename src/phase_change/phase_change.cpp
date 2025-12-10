@@ -56,6 +56,7 @@ PhaseChange::PhaseChange(MeshBlock *pmb, ParameterInput *pin):
   // (Yu, 2025-11-18) Store rho_Np_array
   rho_Np_array.NewAthenaArray(N_P, pmb->ncells3, pmb->ncells2, pmb->ncells1);
   m_p0_array.NewAthenaArray(N_P);
+  f_inter_ice_array.NewAthenaArray(N_P);
   
   // Register arrays for restart file I/O (Yu, 2025-11-18)
   pmb->RegisterMeshBlockData(rho_Np_array);
@@ -64,12 +65,13 @@ PhaseChange::PhaseChange(MeshBlock *pmb, ParameterInput *pin):
   Units *punit = pmb->pmy_mesh->punit;
   
   min_tol_ = pin->GetOrAddReal("problem", "min_tol", 1.e-7);
-  f_ICE_inter0_ = pin->GetOrAddReal("problem", "f_ICE_inter0", 0.5);
   
   // (Yu, 2025-11-18) Convert input parameters from CGS to code units
   for (int p = 0; p < N_P; ++p) {
     Real m_p0_cgs = pin->GetReal("dust", "m_p0_" + std::to_string(p+1)); // [g]
     m_p0_array(p) = m_p0_cgs / punit->code_mass_cgs; // Convert to code units
+
+    f_inter_ice_array(p) = pin->GetOrAddReal("dust", "f_inter_ice_" + std::to_string(p+1), 0.5);
   }
   
   Real rho_sil_inter_cgs = pin->GetOrAddReal("problem", "rho_sil_inter", 3.0); // [g/cm^3]
@@ -226,7 +228,7 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
           
           // update rho_Np for pebble p
           Real &rho_Np_p = rho_Np_array(p, k, j, i);
-          rho_Np_p = rho_sil_p/(1.0 - f_ICE_inter0_)/m_p0_array(p); // [code_number_density]
+          rho_Np_p = rho_sil_p/(1.0 - f_inter_ice_array(p))/m_p0_array(p); // [code_number_density]
           
           // Derive m_p and s_p from rho_Np and current densities (Yu, 2025-11-18)
           Real m_p = Get_m_p_from_rho_Np(rho_I_p, rho_sil_p, rho_Np_p); // [code_mass]

@@ -17,6 +17,7 @@
 #include <fstream>
 #include <iostream>   // endl
 #include <limits>
+#include <src/defs.hpp>
 #include <sstream>    // stringstream
 #include <stdexcept>  // runtime_error
 #include <string>     // c_str()
@@ -81,10 +82,9 @@ void Vr_Mdot(const Real r_active, const Real r_ghost, const Real rho_active,
 // problem parameters which are useful to make global to this file
 Real gm0, r0, rho0, T0, gamma_gas, Omega0, alpha_vis, nu_slope, cs2_0, qvalue, pvalue;
 Real dfloor, dffloor, pfloor;
-  //snowline
-Real f_ICE_inter0, rho_sil_inter, rho_ice_inter;
+//snowline
 Real M_dot_g, L_star; // M_sun/yr
-Real p2g_flux;
+Real p2g_flux[NDUSTFLUIDS-NVapor];
 
 Real initial_D2G[NDUSTFLUIDS], Stokes_number[NDUSTFLUIDS], Hratio[NDUSTFLUIDS], weight_dust[NDUSTFLUIDS];
 bool mom_correct_Flag, Isothermal_Flag, Damping_Flag, Theta_Gas_Damping_Flag ,Allow_T_change_Flag;
@@ -204,12 +204,11 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   max_dfvdt = pin->GetOrAddReal("problem", "max_dfvdt", 10.0);
   dust_start_injection = pin->GetReal("problem", "dust_start_injection");
   injection_Tsoft = pin->GetReal("problem", "injection_Tsoft");
-  f_ICE_inter0 = pin->GetOrAddReal("problem", "f_ICE_inter0", 0.5);
-  rho_sil_inter = pin->GetOrAddReal("problem", "rho_sil_inter", 3.0); // cgs, internal density of silicate
-  rho_ice_inter = pin->GetOrAddReal("problem", "rho_ice_inter", 1.0); // cgs, internal density of ice
   M_dot_g = pin->GetOrAddReal("problem", "M_dot_g", 1.e-8); // M_sun/ Yr, gas accretion rate
   L_star = pin->GetOrAddReal("problem", "L_star", 1.0); // luminosity of central star [L_sun]
-  p2g_flux = pin->GetOrAddReal("problem", "p2g_flux", 0.8); // pebble to gas accretion rate
+  for (int n = 0; n < NDUSTFLUIDS-NVapor; ++n) {
+    p2g_flux[n] = pin->GetOrAddReal("dust", "p2g_flux_" + std::to_string(n+1), 0.0); // pebble to gas accretion rate
+  }
   // The parameters of damping zones
   x1min = pin->GetReal("mesh", "x1min");
   x1max = pin->GetReal("mesh", "x1max");
@@ -332,8 +331,8 @@ void MeshBlock::InitUserMeshBlockData(ParameterInput *pin){
   AllocateUserOutputVariables(14);
   SetUserOutputVariableName(0,"Tem");
   SetUserOutputVariableName(1,"st");
-  SetUserOutputVariableName(2,"m_p");
-  SetUserOutputVariableName(3,"s_p");
+  SetUserOutputVariableName(2,"s_p_1");
+  SetUserOutputVariableName(3,"s_p_2");
   SetUserOutputVariableName(4,"q_latent");
   SetUserOutputVariableName(5,"q_z");
   SetUserOutputVariableName(6,"flx_ice_x1");
@@ -438,11 +437,12 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
         if (pphase_change != nullptr && N_Z > 0) {
           for (int p = 0; p < N_P; ++p) {
             int refrac_id = GetRefracDustId(p); // refractory composition (z=1)
+            int ice_id = GetIceDustId(p); // ice composition (z=0)
             int rho_id = 4*refrac_id;
             Real rho_sil_p = pdustfluids->df_u(rho_id, k, j, i); // [code_density]
             // Calculate initial rho_Np from refractory density (all in code units)
             Real &rho_Np = pphase_change->rho_Np_array(p, k, j, i);
-            rho_Np = rho_sil_p/(1.0 - f_ICE_inter0)/pphase_change->m_p0_array(p); // [code_number_density]
+            rho_Np = rho_sil_p/(1.0 - pphase_change->f_inter_ice_array(p))/pphase_change->m_p0_array(p); // [code_number_density]
           }
         }
 
@@ -991,13 +991,14 @@ void Mesh::UserWorkInLoop() {
 
   // Get the total mass flux;
   Real Mdot_est = 0.0;
-  AthenaArray<Real> Mdot_peb_est;
-  Mdot_peb_est.NewAthenaArray(NDUSTFLUIDS);
+  AthenaArray<Real> Mdot_peb, Mdot_peb_est;
+  Mdot_peb.NewAthenaArray(NDUSTFLUIDS-NVapor);
+  Mdot_peb_est.NewAthenaArray(NDUSTFLUIDS-NVapor);
   // Initialize to zero (only pebble compositions will be set, vapor is ignored)
-  for (int n=0; n<NDUSTFLUIDS; n++) {
+  for (int n=0; n<NDUSTFLUIDS-NVapor; n++) {
     Mdot_peb_est(n) = 0.0;
+    Mdot_peb(n) = p2g_flux[n]*Mdot_gas;
   }
-  Real Mdot_peb = f_ICE_inter0*p2g_flux*Mdot_gas;
 
   for (int bn=0; bn<nblocal; ++bn) {
     MeshBlock *pmb = my_blocks(bn);
@@ -1034,16 +1035,16 @@ void Mesh::UserWorkInLoop() {
           Real v_drift_peb = -0.004; // random drift velocity
           Real dust_vel1 = v_drift_peb*std::sin(x2);
           
-          Real sigma_peb = 2.0*Mdot_peb /(v_drift_peb * 2.0*PI*rad_active);
-          Real cs0 = std::sqrt(Tem_mid/(mu_xy*KELVIN));
-          Real h_peb = Hratio[0]* cs0/std::sqrt(gm0/(rad_active*SQR(rad_active)));
-          Real rho_peb_mid = sigma_peb / (sqrt(2.0*PI)*h_peb);
-          Real dust_rho = rho_peb_mid* std::exp(-0.5*SQR(z_active/h_peb));
-          dust_rho = (dust_rho > dffloor) ? dust_rho : dffloor;
-          
           for (int p=0; p<N_P; p++) {
             for (int n=0; n<N_Z; n++) {
               int dust_id = N_Z * p + n;
+              Real sigma_peb = 2.0*Mdot_peb(dust_id) /(v_drift_peb * 2.0*PI*rad_active);
+              Real cs0 = std::sqrt(Tem_mid/(mu_xy*KELVIN));
+              Real h_peb = Hratio[0]* cs0/std::sqrt(gm0/(rad_active*SQR(rad_active)));
+              Real rho_peb_mid = sigma_peb / (sqrt(2.0*PI)*h_peb);
+              Real dust_rho = rho_peb_mid* std::exp(-0.5*SQR(z_active/h_peb));
+              dust_rho = (dust_rho > dffloor) ? dust_rho : dffloor;
+
               pmb->pdustfluids->inflx_dust_x1(dust_id,k,j,0) = dust_rho*dust_vel1;
               Mdot_peb_est(dust_id) += pmb->pdustfluids->inflx_dust_x1(dust_id,k,j,0)*ds_ghost;
             }
@@ -1055,12 +1056,12 @@ void Mesh::UserWorkInLoop() {
 
   Real flx_ratio = Mdot_gas / Mdot_est;
   AthenaArray<Real> flx_peb_ratio;
-  flx_peb_ratio.NewAthenaArray(NDUSTFLUIDS);
+  flx_peb_ratio.NewAthenaArray(NDUSTFLUIDS-NVapor);
   // Calculate flux ratio for each pebble composition (vapor entries remain uninitialized but unused)
   for (int p=0; p<N_P; p++) {
     for (int n=0; n<N_Z; n++) {
     int dust_id = N_Z * p + n;
-      flx_peb_ratio(dust_id) = Mdot_peb / Mdot_peb_est(dust_id);
+      flx_peb_ratio(dust_id) = Mdot_peb(dust_id) / Mdot_peb_est(dust_id);
     }
   }
 
@@ -1174,6 +1175,23 @@ void MeshBlock::UserWorkInLoop(){
           d0_mom3 = d1_vel3*d0_den;
         }
 
+        // maybe do floor value here.
+        for (int n=0; n<NDUSTFLUIDS; n++) {
+          int dust_id = n;
+          int rho_id  = 4*dust_id;
+          int v1_id   = rho_id + 1;
+          int v2_id   = rho_id + 2;
+          int v3_id   = rho_id + 3;
+
+          Real &dust_rho = pdustfluids->df_w(rho_id, k, j, i);
+          dust_rho = (dust_rho > dffloor) ? dust_rho : (dffloor);
+
+          pdustfluids->df_u(rho_id, k, j, i) = dust_rho;
+          pdustfluids->df_u(v1_id, k, j, i) = dust_rho*pdustfluids->df_w(v1_id, k, j, i);
+          pdustfluids->df_u(v2_id, k, j, i) = dust_rho*pdustfluids->df_w(v2_id, k, j, i);
+          pdustfluids->df_u(v3_id, k, j, i) = dust_rho*pdustfluids->df_w(v3_id, k, j, i);
+        }
+
         // this is to calculate the temperature for the ghost cells defining boundary conditions
         if(i < is or i > ie or j < js or j > je){
           Real E_kg = 0.5*(SQR(gas_vel1) + SQR(gas_vel2) + SQR(gas_vel3))*gas_den;
@@ -1224,21 +1242,24 @@ void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin){
         Real prs = rho_g*T/(mu*KELVIN);
         // output
         user_out_var(0,k,j,i) = phydro->Tem(k,j,i);
-        // user_out_var(1,k,j,i) = prs/rhoe_g + 1.0;
         int pebble0_ice_id = GetIceDustId(0);
         int pebble0_refrac_id = GetRefracDustId(0);
         user_out_var(1,k,j,i) = pdustfluids->stopping_time_array(pebble0_ice_id,k,j,i);
         // user_out_var(1,k,j,i) = phydro->hdif.kappa(HydroDiffusion::DiffProcess::aniso, k, j, i);
         if (pphase_change != nullptr && N_P > 0) {
-          Real rho_Np = pphase_change->rho_Np_array(0, k, j, i); // [code_number_density]
-          Real rho_I = pdustfluids->df_w(4*pebble0_ice_id, k, j, i); // ice for pebble 0 [code_density]
-          Real rho_sil = pdustfluids->df_w(4*pebble0_refrac_id, k, j, i); // refractory for pebble 0 [code_density]
-          Real m_p = pphase_change->Get_m_p_from_rho_Np(rho_I, rho_sil, rho_Np); // [code_mass]
-          Real s_p = pphase_change->Get_s_p_from_m_p(m_p, rho_I, rho_sil); // [code_length]
-          Units *punit = pmy_mesh->punit;
-          user_out_var(3,k,j,i) = s_p * punit->code_length_cgs; // Convert to CGS for output
+          for (int p=0; p<N_P; p++) {
+            int pebble_ice_id = GetIceDustId(p);
+            int pebble_refrac_id = GetRefracDustId(p);
+            Real rho_Np = pphase_change->rho_Np_array(p, k, j, i); // [code_number_density]
+            Real rho_I = pdustfluids->df_w(4*pebble_ice_id, k, j, i); // ice for pebble p [code_density]
+            Real rho_sil = pdustfluids->df_w(4*pebble_refrac_id, k, j, i); // refractory for pebble p [code_density]
+            Real m_p = pphase_change->Get_m_p_from_rho_Np(rho_I, rho_sil, rho_Np); // [code_mass]
+            Real s_p = pphase_change->Get_s_p_from_m_p(m_p, rho_I, rho_sil); // [code_length]
+
+            Units *punit = pmy_mesh->punit;
+            user_out_var(2+p,k,j,i) = s_p * punit->code_length_cgs; // Convert to CGS for output
+          }
         }
-        // user_out_var(4,k,j,i) = pdustfluids->dfv_dt(k,j,i);
         
         user_out_var(6,k,j,i) = pdustfluids->df_flux[X1DIR](pebble0_ice_id,k,j,i);
         user_out_var(7,k,j,i) = pdustfluids->df_flux[X2DIR](pebble0_ice_id,k,j,i);
@@ -1259,7 +1280,7 @@ void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin){
         int tk = static_cast<int>(loc.lx3)*block_size.nx3+(k-kl);
 
         // radiative heating rate, q_z
-        user_out_var(2,k,j,i) = pmy_mesh->ruser_mesh_data[1](tk, tj, ti);
+        // user_out_var(2,k,j,i) = pmy_mesh->ruser_mesh_data[1](tk, tj, ti);
         user_out_var(5,k,j,i) = pmy_mesh->ruser_mesh_data[2](tk, tj, ti);
       }
     }
