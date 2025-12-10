@@ -255,7 +255,7 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
         Real drho_limit = 0.0;
         Real avail_p = 0.0;
         Real avail_v = 0.0;
-        Real minimum = 1e-308; 
+        Real minimum = 0.0; 
 
         if (sign > 0.0) {
           for (int p = 0; p < N_P; ++p) {
@@ -294,8 +294,17 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
         }
         // fix the ratio when conducting root finding
         // This could be improved by updating the ratio in the root finding process, but keep it flexible for now.
-        for (int p = 0; p < N_P; ++p) {
-          drho_d_ratio_array(p) = drho_d_max_array(p) / drho_limit;
+        // for (int p = 0; p < N_P; ++p) {
+        //   drho_d_ratio_array(p) = drho_d_max_array(p) / drho_limit;
+        // }
+        if (drho_limit > 0.0) {
+          for (int p = 0; p < N_P; ++p) {
+            drho_d_ratio_array(p) = drho_d_max_array(p) / drho_limit;
+          }
+        } else {
+          for (int p = 0; p < N_P; ++p) {
+            drho_d_ratio_array(p) = 0.0;
+          }
         }
 
         // No use.
