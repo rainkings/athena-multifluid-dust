@@ -160,6 +160,12 @@ void EquationOfState::PrimitiveToConserved(
         if (N_Z > 0){ // (Yu, 2025-11-18)
           int vapor_den_id = vapor_id*4;
           Real fv = pmy_block_->pdustfluids->df_w(vapor_den_id,k,j,i)/w_d;
+          if (std::isnan(fv)){
+            std::stringstream msg;
+            msg << "### FATAL ERROR in EquationOfState::PrimitiveToConserved" << std::endl
+                << "fv= nan" << std::endl;
+            ATHENA_ERROR(msg);
+          }
           u_e = EgasFromRhoP_fv(u_d, w_p, fv) + 0.5*w_d*(SQR(w_vx) + SQR(w_vy) + SQR(w_vz));
         }else{
           u_e = EgasFromRhoP(u_d, w_p) + 0.5*w_d*(SQR(w_vx) + SQR(w_vy) + SQR(w_vz));

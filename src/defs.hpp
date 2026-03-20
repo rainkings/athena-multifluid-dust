@@ -16,10 +16,10 @@
 // configure.py dict(definitions) string values:
 
 // problem generator
-#define PROBLEM_GENERATOR "disk_snowline_2D_RT_erg_2_twopop"
+#define PROBLEM_GENERATOR "disk_snowline_1d_2p"
 
 // coordinate system
-#define COORDINATE_SYSTEM "spherical_polar"
+#define COORDINATE_SYSTEM "cylindrical"
 
 // Riemann solver
 #define RIEMANN_SOLVER "hllc"
@@ -98,7 +98,7 @@
 #define NOT_MPI_PARALLEL
 
 // OpenMP parallelization (OPENMP_PARALLEL or NOT_OPENMP_PARALLEL)
-#define OPENMP_PARALLEL
+#define NOT_OPENMP_PARALLEL
 
 // HDF5 output (HDF5OUTPUT or NO_HDF5OUTPUT)
 #define HDF5OUTPUT
@@ -116,7 +116,7 @@
 // compiler options
 #define COMPILED_WITH "g++"
 #define COMPILER_COMMAND "g++"
-#define COMPILED_WITH_OPTIONS " -I/home/izx/bin/hdf5/include -O3 -std=c++11 -fopenmp  -L/home/izx/bin/hdf5/lib  -lhdf5" // NOLINT
+#define COMPILED_WITH_OPTIONS " -I/home/izx/bin/hdf5/include -O3 -std=c++11  -L/home/izx/bin/hdf5/lib  -lhdf5" // NOLINT
 
 //----------------------------------------------------------------------------------------
 // macros associated with numerical algorithm (rarely modified)
@@ -124,11 +124,11 @@
 #define NHYDRO 5
 #define NFIELD 0
 #define NWAVE 5
-#define NDUSTFLUIDS 5    // N dust species
-#define NDUSTVARS (5*4)  // 4*N dust variables
-#define NDUSTGAS  (5+1)  // N dust + 1 gas
+#define NDUSTFLUIDS 3    // N dust species
+#define NDUSTVARS (3*4)  // 4*N dust variables
+#define NDUSTGAS  (3+1)  // N dust + 1 gas
 #define N_P 2                // number of pebble sizes (phase change module)
-#define N_Z 2           // number of compositions per pebble (phase change module)
+#define N_Z 1           // number of compositions per pebble (phase change module)
 #define NSCALARS 0
 #define NSPECIES 0
 #define NGHOST 2

@@ -290,10 +290,10 @@ void HydroDiffusion::NewDiffusionDt(Real &dt_vis, Real &dt_cnd) {
 #pragma omp simd
         for (int i=il; i<=iu; ++i) kappa_t(i) += kappa(DiffProcess::iso,k,j,i);
       }
-      if (kappa_aniso > 0.0) {
-#pragma omp simd
-        for (int i=il; i<=iu; ++i) kappa_t(i) += kappa(DiffProcess::aniso,k,j,i);
-      }
+//       if (kappa_aniso > 0.0) {
+// #pragma omp simd
+//         for (int i=il; i<=iu; ++i) kappa_t(i) += kappa(DiffProcess::aniso,k,j,i);
+//       }
       pmb_->pcoord->CenterWidth1(k, j, il, iu, len);
       pmb_->pcoord->CenterWidth2(k, j, il, iu, dx2);
       pmb_->pcoord->CenterWidth3(k, j, il, iu, dx3);

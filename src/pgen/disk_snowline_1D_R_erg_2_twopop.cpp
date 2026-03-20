@@ -17,10 +17,11 @@
 #include <fstream>
 #include <iostream>   // endl
 #include <limits>
-#include <src/defs.hpp>
 #include <sstream>    // stringstream
 #include <stdexcept>  // runtime_error
 #include <string>     // c_str()
+#include <vector>
+#include <utility>
 
 // Athena++ headers
 #include "../athena.hpp"
@@ -79,14 +80,18 @@ void Vr_outflow(const Real r_active, const Real r_ghost, const Real rho_active,
                     const Real rho_ghost, const Real vr_active, Real &vr_ghost);
 void Vr_Mdot(const Real r_active, const Real r_ghost, const Real rho_active,
                     const Real rho_ghost, const Real vr_active, Real &vr_ghost);
+template<typename T>
+void print(const T& value, const char* name);
+#define PRINT(x) print(x, #x)
 // problem parameters which are useful to make global to this file
 Real gm0, r0, rho0, T0, gamma_gas, Omega0, alpha_vis, nu_slope, cs2_0, qvalue, pvalue;
 Real dfloor, dffloor, pfloor;
-//snowline
+  //snowline
+Real f_ICE_inter0, rho_sil_inter, rho_ice_inter;
 Real M_dot_g, L_star; // M_sun/yr
-Real p2g_flux[NDUSTFLUIDS-NVapor];
+// Real p2g_flux;
 
-Real initial_D2G[NDUSTFLUIDS], Stokes_number[NDUSTFLUIDS], Hratio[NDUSTFLUIDS], weight_dust[NDUSTFLUIDS];
+Real initial_D2G[NDUSTFLUIDS], Stokes_number[NDUSTFLUIDS], Hratio[NDUSTFLUIDS], weight_dust[NDUSTFLUIDS], p2g_flux[NDUSTFLUIDS];
 bool mom_correct_Flag, Isothermal_Flag, Damping_Flag, Theta_Gas_Damping_Flag ,Allow_T_change_Flag;
 
 Real x1min, x1max, x2min, x2max;
@@ -196,6 +201,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
       Stokes_number[n] = pin->GetReal("dust", "Stokes_number_" + std::to_string(n+1));
       Hratio[n]        = pin->GetReal("dust", "Hratio_" + std::to_string(n+1));
       weight_dust[n]   = 2.0/(Stokes_number[n] + SQR(1.0+initial_D2G[n])/Stokes_number[n]);
+      p2g_flux[n]      = pin->GetOrAddReal("dust", "p2g_flux_" + std::to_string(n+1), 0.2);
     }
   }
 
@@ -204,11 +210,12 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   max_dfvdt = pin->GetOrAddReal("problem", "max_dfvdt", 10.0);
   dust_start_injection = pin->GetReal("problem", "dust_start_injection");
   injection_Tsoft = pin->GetReal("problem", "injection_Tsoft");
+  f_ICE_inter0 = pin->GetOrAddReal("problem", "f_ICE_inter0", 0.5);
+  rho_sil_inter = pin->GetOrAddReal("problem", "rho_sil_inter", 3.0); // cgs, internal density of silicate
+  rho_ice_inter = pin->GetOrAddReal("problem", "rho_ice_inter", 1.0); // cgs, internal density of ice
   M_dot_g = pin->GetOrAddReal("problem", "M_dot_g", 1.e-8); // M_sun/ Yr, gas accretion rate
   L_star = pin->GetOrAddReal("problem", "L_star", 1.0); // luminosity of central star [L_sun]
-  for (int n = 0; n < NDUSTFLUIDS-NVapor; ++n) {
-    p2g_flux[n] = pin->GetOrAddReal("dust", "p2g_flux_" + std::to_string(n+1), 0.0); // pebble to gas accretion rate
-  }
+  // p2g_flux = pin->GetOrAddReal("problem", "p2g_flux", 0.8); // pebble to gas accretion rate
   // The parameters of damping zones
   x1min = pin->GetReal("mesh", "x1min");
   x1max = pin->GetReal("mesh", "x1max");
@@ -262,39 +269,85 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
     EnrollDustDiffusivity(MyDustDiffusivity);
   }
   // Enroll user-defined thermal conduction
-  EnrollConductionCoefficient(MyConductivity);
+  // EnrollConductionCoefficient(MyConductivity);
 
   // Enroll userdef mesh, x2
-  if (pin->GetReal("mesh","x2rat") < 0.0){
-    EnrollUserMeshGenerator(X2DIR, CompressedX2);
-  }
+  // if (pin->GetReal("mesh","x2rat") < 0.0){
+  //   EnrollUserMeshGenerator(X2DIR, CompressedX2);
+  // }
 
   // global optical depth
   if(true){
     AllocateRealUserMeshDataField(8);
     // tau_vi, tau_eff, q_total, F_z, Tem_RT, int_1 & int_2 to get rho(z)
-    ruser_mesh_data[0].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
-    ruser_mesh_data[1].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
-    ruser_mesh_data[2].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
-    ruser_mesh_data[3].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
-    ruser_mesh_data[4].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
-    ruser_mesh_data[5].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
-    ruser_mesh_data[6].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
-    ruser_mesh_data[7].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
+    ruser_mesh_data[0].NewAthenaArray(mesh_size.nx3, mesh_size.nx2, mesh_size.nx1 + 2*NGHOST);
+    ruser_mesh_data[1].NewAthenaArray(mesh_size.nx3, mesh_size.nx2, mesh_size.nx1 + 2*NGHOST);
+    ruser_mesh_data[2].NewAthenaArray(mesh_size.nx3, mesh_size.nx2, mesh_size.nx1 + 2*NGHOST);
+    ruser_mesh_data[3].NewAthenaArray(mesh_size.nx3, mesh_size.nx2, mesh_size.nx1 + 2*NGHOST);
+    ruser_mesh_data[4].NewAthenaArray(mesh_size.nx3, mesh_size.nx2, mesh_size.nx1 + 2*NGHOST);
+    ruser_mesh_data[5].NewAthenaArray(mesh_size.nx3, mesh_size.nx2, mesh_size.nx1 + 2*NGHOST);
+    ruser_mesh_data[6].NewAthenaArray(mesh_size.nx3, mesh_size.nx2, mesh_size.nx1 + 2*NGHOST);
+    ruser_mesh_data[7].NewAthenaArray(mesh_size.nx3, mesh_size.nx2, mesh_size.nx1 + 2*NGHOST);
   }
 
-  // print examination (Yu, 2025-11-16)
-  std::cout << "Parameters in this simulation"<< std::endl;
-  std::cout << "qvalue ="<< qvalue<< std::endl;
-  std::cout << "pvalue ="<< pvalue<< std::endl;
-  
-  // Calculate phase change constants (same as PhaseChange constructor) (Yu, 2025-11-16)
-  std::cout << "inner_damping_radius =" << radius_inner_damping/r0*3.0 <<std::endl;
-  std::cout << "outer_damping_radius =" << radius_outer_damping/r0*3.0 <<std::endl;
-  std::cout << "theta_upper_damping = " << theta_upper_damping << std::endl;
-  std::cout << "theta_lower_damping = " << theta_lower_damping << std::endl;
-  std::cout << "M_dot_g = " << M_dot_g << "M_sun/yr" << std::endl;
-  std::cout << "alpha_vis = " << alpha_vis << std::endl;
+  // print parameters
+  if(Globals::my_rank == 0){
+    std::cout << "==============================================================" << std::endl;
+    std::cout << "Key parameters for this simulation:" << std::endl;
+    // std::cout << "Latent_heat_flag = " << Latent_heat_flag << std::endl;
+    std::cout << "kappa0 = " << kappa0 << "cm^2/g" << std::endl;
+    std::cout << "L_star = " << L_star << "L_sun" << std::endl;
+    std::cout << "==============================================================" << std::endl;
+    std::cout << "Parameters in this simulation"<< std::endl;
+    std::cout << "qvalue ="<< qvalue<< std::endl;
+    std::cout << "pvalue ="<< pvalue<< std::endl;
+    std::cout << "KELVIN ="<< KELVIN<< std::endl;
+    // std::cout << "p_eq0 ="<< P_eq0<< std::endl;
+    // std::cout << "L_heat ="<< L_heat<< std::endl;
+    std::cout << "T_a=" << T_a << "K" << std::endl;
+    // std::cout << "a_semi =" << a_semi << "AU" <<std::endl;
+    // std::cout << "Cd_water =" << Cd_water <<std::endl;
+    std::cout << "inner_damping_radius =" << radius_inner_damping/r0*3.0 <<std::endl;
+    std::cout << "outer_damping_radius =" << radius_outer_damping/r0*3.0 <<std::endl;
+    std::cout << "theta_upper_damping = " << theta_upper_damping << std::endl;
+    std::cout << "theta_lower_damping = " << theta_lower_damping << std::endl;
+
+    std::cout << "M_dot_g = " << M_dot_g << "M_sun/yr" << std::endl;
+    std::cout << "alpha_vis = " << alpha_vis << std::endl;
+
+    std::cout << "dust_start_injection = " << dust_start_injection << std::endl;
+
+    // print some informations for multi-population dust
+    if (N_P > 1) {
+      std::cout << "==============================================================" << std::endl;
+      std::cout << "Multi-population dust is enabled." << std::endl;
+      std::cout << "There are " << N_P << " dust bins defined." << std::endl;
+      // for (int n=0; n<N_P; ++n) {
+      //   std::cout << "m_p0_" << (n+1) << " = " << pphase_change->m_p0_array(n) << std::endl;
+      //   std::cout << "p2g_flux_" << (n+1) << " = " << p2g_flux[n] << std::endl;
+      // }
+    }
+
+    // check whether the small particles parameters are set 
+    // std::cout << NDUSTFLUIDS << " dust fluids are defined." << std::endl;
+    // for (int n=0; n<NDUSTFLUIDS; n++) {
+    //   std::cout << *(Stokes_number + n) << std::endl;
+    //   std::cout << *(Hratio + n) << std::endl;
+    // }
+    return;
+  }
+  // // print examination (Yu, 2025-11-16)
+  // std::cout << "Parameters in this simulation"<< std::endl;
+  // std::cout << "qvalue ="<< qvalue<< std::endl;
+  // std::cout << "pvalue ="<< pvalue<< std::endl;
+  //
+  // // Calculate phase change constants (same as PhaseChange constructor) (Yu, 2025-11-16)
+  // std::cout << "inner_damping_radius =" << radius_inner_damping/r0*3.0 <<std::endl;
+  // std::cout << "outer_damping_radius =" << radius_outer_damping/r0*3.0 <<std::endl;
+  // std::cout << "theta_upper_damping = " << theta_upper_damping << std::endl;
+  // std::cout << "theta_lower_damping = " << theta_lower_damping << std::endl;
+  // std::cout << "M_dot_g = " << M_dot_g << "M_sun/yr" << std::endl;
+  // std::cout << "alpha_vis = " << alpha_vis << std::endl;
 
   return;
 }
@@ -327,23 +380,82 @@ void MeshBlock::InitUserMeshBlockData(ParameterInput *pin){
       }
     }
   }
-
-  AllocateUserOutputVariables(14);
-  SetUserOutputVariableName(0,"Tem");
-  SetUserOutputVariableName(1,"st");
-  SetUserOutputVariableName(2,"s_p_1");
-  SetUserOutputVariableName(3,"s_p_2");
-  SetUserOutputVariableName(4,"q_latent");
-  SetUserOutputVariableName(5,"q_z");
-  SetUserOutputVariableName(6,"flx_ice_x1");
-  SetUserOutputVariableName(7,"flx_ice_x2");
-  SetUserOutputVariableName(8,"flx_vap_x1");
-  SetUserOutputVariableName(9,"flx_vap_x2");
-  SetUserOutputVariableName(10,"q_diff");
-  SetUserOutputVariableName(11,"flx_x1");
-  SetUserOutputVariableName(12,"flx_x2");
-  SetUserOutputVariableName(13,"dif");
   
+  AllocateUserOutputVariables(10+3+8);
+  // Firstly, we output the variables related to non-tracer dustfluids 
+  const std::vector<std::pair<int,const char*>> dustProp = {
+    {0,  "st"},
+    {1, "m_p"},
+    {2, "s_p"},
+    {3, "flx_sil_x1"},
+    {4, "flx_sil_x2"},
+  };
+
+  for (int np =0; np<N_P; np++) {
+    for (auto &p : dustProp) {
+      SetUserOutputVariableName(p.first + np*5, (std::string(p.second) + "_" + std::to_string(np+1)).c_str());
+    }
+  }
+
+  // Then, we output the variables related to tracer dustfluids 
+  int offset_vapor = dustProp.size()*N_P; 
+  SetUserOutputVariableName(offset_vapor, "dif");
+  SetUserOutputVariableName(offset_vapor+1, "flx_vap_x1");
+  SetUserOutputVariableName(offset_vapor+2, "flx_vap_x2");
+
+  // Finally, output the variables related to gas 
+  int offset_gas = offset_vapor + 3;
+  const std::vector<std::pair<int,const char*>> gasProp = {
+    {0,  "Tem"},
+    {1,  "q_latent"},
+    {2,  "q_z"},
+    {3, "q_diff"},
+    {4, "flx_x1"},
+    {5, "flx_x2"},
+    {6, "t_relax"},
+    {7, "q_int"},
+  };
+
+  for (auto &p : gasProp) {
+    SetUserOutputVariableName(p.first + offset_gas, p.second);
+  }
+
+  // the change of density from phase change
+  // SetUserOutputVariableName(25, "drho_i_dt");
+  // SetUserOutputVariableName(26, "drho_i1_dt");
+  // SetUserOutputVariableName(27, "drho_v_dt");
+
+  // SetUserOutputVariableName(0,"Tem");
+  // SetUserOutputVariableName(4,"q_latent");
+  // SetUserOutputVariableName(5,"q_z");
+  // SetUserOutputVariableName(10,"q_diff");
+  // SetUserOutputVariableName(11,"flx_x1");
+  // SetUserOutputVariableName(12,"flx_x2");
+  // SetUserOutputVariableName(13,"dif");
+  // SetUserOutputVariableName(23,"t_relax");
+  // SetUserOutputVariableName(24,"q_int");
+  //
+  // SetUserOutputVariableName(1,"st");
+  // SetUserOutputVariableName(2,"m_p");
+  // SetUserOutputVariableName(3,"s_p");  
+  // SetUserOutputVariableName(6,"flx_ice_x1");
+  // SetUserOutputVariableName(7,"flx_ice_x2");
+  // SetUserOutputVariableName(8,"flx_vap_x1");
+  // SetUserOutputVariableName(9,"flx_vap_x2");
+  // //[25.06.29]zxl: allocate the parameters for the other dust 
+  // SetUserOutputVariableName(14,"st1");
+  // SetUserOutputVariableName(15,"m_p1");
+  // SetUserOutputVariableName(16,"s_p1");
+  // // output the ice flux of the second population
+  // SetUserOutputVariableName(17,"flx_ice1_x1");
+  // SetUserOutputVariableName(18,"flx_ice1_x2");
+  //
+  // // output the flux for silicates. 
+  // SetUserOutputVariableName(19,"flx_sil_x1");
+  // SetUserOutputVariableName(20,"flx_sil_x2");
+  // SetUserOutputVariableName(21,"flx_sil1_x1");
+  // SetUserOutputVariableName(22,"flx_sil1_x2");
+
   return;
 }
 
@@ -377,9 +489,16 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
         Real vel_K     = vK(porb, x1, x2, x3);
         Real Tem = TemProfile(rad,phi,z);
 
+        Real &gas_nu = phydro->hdif.nu(HydroDiffusion::DiffProcess::alpha, k, j, i);
+        gas_nu = alpha_vis* std::pow(rad/r0, nu_slope);
+        Real mu = mu_xy; // simple model, scale height indep. of mu
+        Real cs2 = Tem/(mu*KELVIN);
+        Real omega = std::sqrt(gm0/(rad*rad*rad));
+        Real h_gas = std::sqrt(cs2)/omega; 
         // compute initial conditions in cylindrical coordinates
         Real den_gas = DenProfileCyl_gas_fv_T(rad, phi, z, 0.0, Tem);
-        Real v_acc_gas = Vr_ProfileCyl_gas_fv_T(rad, phi, z, 0.0, Tem);
+        Real sigma_gas = den_gas*std::sqrt(2.0*PI)*h_gas;
+        Real v_acc_gas = -1.5*gas_nu/rad; 
         Real vel_gas_phi = VelProfileCyl_gas_fv_T(rad, phi, z, 0.0, Tem);
         if (porb->orbital_advection_defined)
           vel_gas_phi -= vel_K;
@@ -389,20 +508,25 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
         Real &gas_mom2 = phydro->u(IM2, k, j, i);
         Real &gas_mom3 = phydro->u(IM3, k, j, i);
 
-        gas_dens = den_gas;
-        gas_mom1 = den_gas*v_acc_gas*std::sin(x2);
-        gas_mom2 = den_gas*v_acc_gas*std::cos(x2);
-        gas_mom3 = den_gas*vel_gas_phi;
+        if (v_acc_gas>0.0){
+          std::cout << "initialize" << std::endl;
+          std::cout << "Warning: the initial accretion velocity is positive at (k,j,i)=("<<k<<","<<j<<","<<i<<")!" << std::endl;
+          std::cout << "v_acc_gas = " << v_acc_gas << std::endl;
+        }
+        gas_dens = sigma_gas;
+        gas_mom1 = sigma_gas*v_acc_gas;
+        gas_mom2 = sigma_gas*vel_gas_phi;
+        gas_mom3 = 0.0;
 
         if (NON_BAROTROPIC_EOS) {
-          phydro->u(IEN, k, j, i)  = gas_dens*Tem/(KELVIN*mu_xy)*igm1;
-          phydro->u(IEN, k, j, i) += 0.5*(SQR(gas_mom1) + SQR(gas_mom2) + SQR(gas_mom3))/gas_dens;
+          phydro->u(IEN, k, j, i)  = sigma_gas*Tem/(KELVIN*mu_xy)*igm1;
+          phydro->u(IEN, k, j, i) += 0.5*(SQR(gas_mom1) + SQR(gas_mom2) + SQR(gas_mom3))/sigma_gas;
           phydro->Tem(k, j, i) = Tem;
         }
 
         // Step 1: Store all dustfluid volume density to calculate stopping time.
-        AthenaArray<Real> rho_dustfluid_array;
-        rho_dustfluid_array.NewAthenaArray(NDUSTFLUIDS);
+        AthenaArray<Real> sigma_dustfluid_array;
+        sigma_dustfluid_array.NewAthenaArray(NDUSTFLUIDS);
         Real omega_dyn = std::sqrt(gm0/std::pow(rad,3.0));
         if (NDUSTFLUIDS > 0) {
           for (int n=0; n<NDUSTFLUIDS; ++n) {
@@ -415,19 +539,20 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
             // compute initial conditions in cylindrical coordinates
             Real den_dust = DenProfileCyl_dust(rad, phi, z, initial_D2G[dust_id], Hratio[dust_id]);
             Real vel_dust_phi = VelProfileCyl_dust(rad, phi, z);
+            Real sigma_dust = den_dust*std::sqrt(2.0*PI)*h_gas*Hratio[dust_id];
             if (porb->orbital_advection_defined)
               vel_dust_phi -= vel_K;
-            rho_dustfluid_array(dust_id) = den_dust;
+            sigma_dustfluid_array(dust_id) = sigma_dust;
 
-            pdustfluids->df_u(rho_id, k, j, i) = den_dust;
+            pdustfluids->df_u(rho_id, k, j, i) = sigma_dust;
             if(dust_id == vapor_id){
-              pdustfluids->df_u(v1_id,  k, j, i) = den_dust*v_acc_gas*std::sin(x2);
-              pdustfluids->df_u(v2_id,  k, j, i) = den_dust*v_acc_gas*std::cos(x2);
-              pdustfluids->df_u(v3_id,  k, j, i) = den_dust*vel_dust_phi;
+              pdustfluids->df_u(v1_id,  k, j, i) = sigma_dust*v_acc_gas;
+              pdustfluids->df_u(v2_id,  k, j, i) = sigma_dust*vel_dust_phi;
+              pdustfluids->df_u(v3_id,  k, j, i) = 0.0;
             }else{
               pdustfluids->df_u(v1_id,  k, j, i) = 0.0;
-              pdustfluids->df_u(v2_id,  k, j, i) = 0.0;
-              pdustfluids->df_u(v3_id,  k, j, i) = den_dust*vel_dust_phi;
+              pdustfluids->df_u(v2_id,  k, j, i) = sigma_dust*vel_dust_phi;
+              pdustfluids->df_u(v3_id,  k, j, i) = 0.0;
             }
 					}
         }
@@ -436,20 +561,17 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
         // Step 2: Initialize rho_Np_array after dust densities are set
         if (pphase_change != nullptr && N_Z > 0) {
           for (int p = 0; p < N_P; ++p) {
-            int refrac_id = GetRefracDustId(p); // refractory composition (z=1)
-            int ice_id = GetIceDustId(p); // ice composition (z=0)
+            int refrac_id = N_Z * (p + 1) - 1; // refractory composition (z=1)
             int rho_id = 4*refrac_id;
-            Real rho_sil_p = pdustfluids->df_u(rho_id, k, j, i); // [code_density]
+            Real sigma_sil_p = pdustfluids->df_u(rho_id, k, j, i); // [code_density]
             // Calculate initial rho_Np from refractory density (all in code units)
             Real &rho_Np = pphase_change->rho_Np_array(p, k, j, i);
-            rho_Np = rho_sil_p/(1.0 - pphase_change->f_inter_ice_array(p))/pphase_change->m_p0_array(p); // [code_number_density]
+            rho_Np = sigma_sil_p/(1.0 - f_ICE_inter0)/pphase_change->m_p0_array(p); // [code_number_density]
           }
         }
 
         // Step 3: Calculate gas viscosity, stopping time and diffusivity
         // (Yu, 2025-11-16) Calculate stopping time per pebble following new pattern
-        Real &gas_nu = phydro->hdif.nu(HydroDiffusion::DiffProcess::alpha, k, j, i);
-        gas_nu = alpha_vis* std::pow(rad/r0, nu_slope);
         
         if (pphase_change != nullptr) {
           // vapor diffusivity (with artificial decay for outer boundary)
@@ -470,7 +592,7 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
             for (int z = 0; z < N_Z; ++z) {
               int dust_id = N_Z * p + z;
               int rho_id = 4*dust_id;
-              rho_dustfluid_array_pebble(z) = pdustfluids->df_u(rho_id, k, j, i);
+              rho_dustfluid_array_pebble(z) = pdustfluids->df_u(rho_id, k, j, i)/std::sqrt(2.0*PI)/h_gas/Hratio[p]; // convert back to volume density for stopping time calculation
             }
 
             // calculate stopping time for the pebble
@@ -522,12 +644,18 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
 #pragma omp simd
       for (int i=istart; i<=iend; ++i) {
         int ti = static_cast<int>(loc.lx1)*block_size.nx1+(i-istart) + NGHOST_ti ;
-        int tj = static_cast<int>(loc.lx2)*block_size.nx2+(j-js)+ NGHOST;
+        int tj = static_cast<int>(loc.lx2)*block_size.nx2+(j-js);
         int tk = static_cast<int>(loc.lx3)*block_size.nx3+(k-ks);
         
         Real rad, phi, z;
         GetCylCoord(pcoord, rad, phi, z, i, j, k);
-        pmy_mesh->ruser_mesh_data[4](tk,tj,ti) = TemProfile(rad,phi,z);
+        Real Tem_temp = TemProfile(rad, phi, z);
+        if (Tem_temp <= 0.0){
+          std::cout << "Error: Initial temperature is non-positive at (i,j,k)=(" << i << "," << j << "," << k << ")." << std::endl;
+          std::cout << "rad = " << rad << ", phi = " << phi << ", z = " << z << std::endl;
+          std::cout << "Tem_temp = " << Tem_temp << std::endl;
+        }
+        pmy_mesh->ruser_mesh_data[4](tk,tj,ti) = Tem_temp;
       }
     }
   }
@@ -537,526 +665,179 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
 
 void Mesh::UserWorkInLoop() {
   // some constants
-  Real Mdot_gas = -M_dot_g* Constants::solar_mass_cgs/ Constants::yr_cgs / 2.0; // in cgs
+  AthenaArray<Real> &rho_z = ruser_mesh_data[7];
+  Real Mdot_gas = -M_dot_g* Constants::solar_mass_cgs/ Constants::yr_cgs; // in cgs
   Mdot_gas /= (punit->code_mass_cgs /punit->code_time_cgs);
-
-  #ifdef NDUSTFLUIDS
-    AthenaArray<Real> &tau_vi = ruser_mesh_data[0];
-    AthenaArray<Real> &tau_eff = ruser_mesh_data[1];
-    AthenaArray<Real> &q_z = ruser_mesh_data[2];
-    AthenaArray<Real> &q_int = ruser_mesh_data[3];
-    AthenaArray<Real> &Tem_active = ruser_mesh_data[4];
-    AthenaArray<Real> &int_1 = ruser_mesh_data[5];
-    AthenaArray<Real> &int_2 = ruser_mesh_data[6];
-    AthenaArray<Real> &rho_z = ruser_mesh_data[7];
-  #endif
-
-  AthenaArray<Real> tau_vi_f, q_int_f, tau_eff_f;
-  tau_vi_f.NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST+1, mesh_size.nx1 + 2*NGHOST);
-  q_int_f.NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST+1, mesh_size.nx1 + 2*NGHOST);
-  tau_eff_f.NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST+1, mesh_size.nx1 + 2*NGHOST);
-  AthenaArray<Real> rhokappa;
-  rhokappa.NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
-
-  /////////////////////////////////////////////////////////////////////////
-  if(Allow_T_change_Flag){
-    // step 0, calculate tau_vi
-    for (int bn=0; bn<nblocal; ++bn) {
-      MeshBlock *pmb = my_blocks(bn);
-      LogicalLocation &loc = pmb->loc;
-      if (loc.level == root_level) { // root level
-        int istart = pmb->is; int iend = pmb->ie; int NGHOST_ti = NGHOST;
-        if (pmb->pbval->block_bcs[BoundaryFace::inner_x1] == BoundaryFlag::user){
-          istart = pmb->is-NGHOST;
-          NGHOST_ti = 0;
-        }else if (pmb->pbval->block_bcs[BoundaryFace::outer_x1] == BoundaryFlag::user){
-          iend = pmb->ie+NGHOST;
-        }
-        for (int k=pmb->ks; k<=pmb->ke; k++) {
-          for (int j=pmb->js; j<=pmb->je; j++) {
-            for (int i=istart; i<=iend; i++) {            
-              int ti = static_cast<int>(loc.lx1)*pmb->block_size.nx1+(i-istart)+ NGHOST_ti;
-              int tj = static_cast<int>(loc.lx2)*pmb->block_size.nx2+(j-pmb->js)+ NGHOST;
-              int tk = static_cast<int>(loc.lx3)*pmb->block_size.nx3+(k-pmb->ks);
-
-              Real dx2 = pmb->pcoord->dx2f(j)* pmb->pcoord->x1v(i);
-              Real rho_gas = pmb->phydro->w(IDN,k,j,i);
-              Real rho_peb = pmb->pdustfluids->df_w(0,k,j,i) + pmb->pdustfluids->df_w(4,k,j,i);
-              Real fv = pmb->pdustfluids->df_w(4*(vapor_id),k,j,i) / rho_gas;
-              Real kappa = Get_kappa(rho_peb/rho_gas, fv);
-
-              // store rhokappa
-              rhokappa(tk,tj,ti) = rho_gas*kappa;
-              rhokappa(tk,0,ti) = 0.0;
-              rhokappa(tk,1,ti) = 0.0;
-              // direct summation
-              tau_vi_f(tk,tj+1,ti) = rhokappa(tk,tj,ti)*dx2 + tau_vi_f(tk,tj,ti);
-              tau_vi(tk,tj,ti) = 0.5*(tau_vi_f(tk,tj,ti) + tau_vi_f(tk,tj+1,ti));
-              // Simpson's 1/3 rule:
-              // tau_vi(tk,tj,ti) = tau_vi(tk,tj-2,ti) + dx2/3.0*(rhokappa(tk,tj-2,ti) + 4.0*rhokappa(tk,tj-1,ti) + rhokappa(tk,tj,ti));
-              // Trapezoidal rule:
-              // tau_vi(tk,tj,ti) = 0.5*dx2*(rhokappa(tk,tj-1,ti) + rhokappa(tk,tj,ti)) + tau_vi(tk,tj-1,ti);
-            }
-          }
-        }
-      } else {
-        std::stringstream msg;
-        msg << "### FATAL ERROR in disk_snowline_2D_RT.cpp ProblemGenerator"   << std::endl
-            << "This problem prohibits level > 0 currently"
-            << "with error_output=true."  << std::endl;
-          ATHENA_ERROR(msg);
-      }
-    }
-  
-    // do some iteration here:
-    int N_iter = 0;
-    int N_iter_max = 1;
-
-    while(N_iter < N_iter_max){
-      // step 1, calculate q_diff
-      N_iter += 1;
-
-      //step 2: calc q_int
-      Real UNIT_ERG = punit->code_energydensity_cgs * punit->code_volume_cgs;
-      Real UNIT_FLX = punit->code_energydensity_cgs * punit->code_velocity_cgs;
-      
-      for (int bn=0; bn<nblocal; ++bn) {
-        MeshBlock *pmb = my_blocks(bn);
-        LogicalLocation &loc = pmb->loc;
-        if (loc.level == root_level) { // root level
-          int istart = pmb->is; int iend = pmb->ie; int NGHOST_ti = NGHOST;
-          if (pmb->pbval->block_bcs[BoundaryFace::inner_x1] == BoundaryFlag::user){
-            istart = pmb->is-NGHOST;
-            NGHOST_ti = 0;
-          }else if (pmb->pbval->block_bcs[BoundaryFace::outer_x1] == BoundaryFlag::user){
-            iend = pmb->ie+NGHOST;
-          }
-          for (int k=pmb->ks; k<=pmb->ke; k++) {
-            for (int j=pmb->js; j<=pmb->je; j++) {
-              for (int i=istart; i<=iend; i++) {
-                int ti = static_cast<int>(loc.lx1)*pmb->block_size.nx1+(i-istart)+ NGHOST_ti;
-                int tj = static_cast<int>(loc.lx2)*pmb->block_size.nx2+(j-pmb->js)+ NGHOST;
-                int tk = static_cast<int>(loc.lx3)*pmb->block_size.nx3+(k-pmb->ks);
-
-                Real rad, phi, z;
-                GetCylCoord(pmb->pcoord, rad, phi, z, i, j, k);
-                Real dx2 = pmb->pcoord->dx2f(j)* pmb->pcoord->x1v(i);
-                Real rho_gas = pmb->phydro->w(IDN,k,j,i);
-                Real rho_peb = pmb->pdustfluids->df_w(0,k,j,i) + pmb->pdustfluids->df_w(4,k,j,i);
-                Real fv = pmb->pdustfluids->df_w(4*(vapor_id),k,j,i) / rho_gas;             
-                Real H_gas = std::pow(rad/r0, qvalue/2.0 + 1.5);
-                Real cos_inc = (qvalue/2.0 + 0.5) * (4.0*H_gas/rad); // cosine of the incident angle to disk surface
-
-                // accquire tau_(-inf):
-                // Real tau_inf = 2.0 * tau_vi(tk, mesh_size.nx2+NGHOST-1, ti);
-                Real tau_inf = 2.0 * tau_vi_f(tk, mesh_size.nx2+NGHOST, ti);
-                Real E0 = L_star*Constants::solar_lum_cgs / (UNIT_ERG/punit->code_time_cgs) / (8.0*PI*SQR(rad));
-                Real omega = std::sqrt(gm0/std::pow(rad,3.0));
-                Real q_irr = E0* f_vi*rhokappa(tk,tj,ti)*(std::exp(-f_vi*tau_vi(tk,tj,ti)/cos_inc) + std::exp(-f_vi*(tau_inf - tau_vi(tk,tj,ti))/cos_inc));
-                Real nu_gas = pmb->phydro->hdif.nu(HydroDiffusion::DiffProcess::alpha, k, j, i);
-                Real q_vis = 9.0/4.0 *rho_gas* (1.0-fv)* SQR(omega) *nu_gas; // only include viscous heating by H-He
-                ////////////////////
-                // including latent heat
-                // (Yu, 2025-11-16) Updated to use PhaseChange module arrays
-                // q_z(tk,tj,ti) = q_irr + q_vis + pmb->pphase_change->q_latent(k,j,i) + pmb->pphase_change->q_diff(k,j,i);
-                q_z(tk,tj,ti) = q_irr + q_vis;
-                // q_z(tk,tj,ti) = q_irr + q_vis + pmb->pphase_change->q_diff(k,j,i);
-                // linear interpolation
-                q_int_f(tk,tj+1,ti) = q_z(tk,tj,ti)*dx2 + q_int_f(tk,tj,ti);
-                q_int(tk,tj,ti) = 0.5*(q_int_f(tk,tj+1,ti) + q_int_f(tk,tj,ti));
-                // Simpson's 1/3 rule:
-                // q_int(tk,tj,ti) = q_int(tk,tj-2,ti) +  dx2/3.0*(q_z(tk,tj-2,ti) + 4.0*q_z(tk,tj-1,ti) + q_z(tk,tj,ti));
-                // Trapezoidal rule:
-                // q_int(tk,tj,ti) = 0.5*dx2*(q_z(tk,tj-1,ti) + q_z(tk,tj,ti)) + q_int(tk,tj-1,ti);
-              }
-            }
-          }
-        } else {
-          std::stringstream msg;
-          msg << "### FATAL ERROR in disk_snowline_2D_RT.cpp ProblemGenerator"   << std::endl
-              << "This problem prohibits level > 0 currently"
-              << "with error_output=true."  << std::endl;
-            ATHENA_ERROR(msg);
-        }
-      }
-
-      // step 3: calc tau_eff
-      for (int bn=0; bn<nblocal; ++bn) {
-        MeshBlock *pmb = my_blocks(bn);
-        LogicalLocation &loc = pmb->loc;
-        if (loc.level == root_level) { // root level
-          int istart = pmb->is; int iend = pmb->ie; int NGHOST_ti = NGHOST;
-          if (pmb->pbval->block_bcs[BoundaryFace::inner_x1] == BoundaryFlag::user){
-            istart = pmb->is-NGHOST;
-            NGHOST_ti = 0;
-          }else if (pmb->pbval->block_bcs[BoundaryFace::outer_x1] == BoundaryFlag::user){
-            iend = pmb->ie+NGHOST;
-          }
-          for (int k=pmb->ks; k<=pmb->ke; k++) {
-            for (int j=pmb->js; j<=pmb->je; j++) {
-              for (int i=istart; i<=iend; i++) {
-                int ti = static_cast<int>(loc.lx1)*pmb->block_size.nx1+(i-istart)+ NGHOST_ti;
-                int tj = static_cast<int>(loc.lx2)*pmb->block_size.nx2+(j-pmb->js)+ NGHOST;
-                int tk = static_cast<int>(loc.lx3)*pmb->block_size.nx3+(k-pmb->ks);
-
-                Real dx2 = pmb->pcoord->dx2f(j)* pmb->pcoord->x1v(i);
-                Real F_inf = q_int_f(tk, mesh_size.nx2+NGHOST, ti);
-                
-                // linear interpolation
-                tau_eff_f(tk,tj+1,ti) = rhokappa(tk,tj,ti)*(1.0 - q_int(tk,tj,ti)/F_inf) * dx2 + tau_eff_f(tk,tj,ti);
-                tau_eff(tk,tj,ti) = 0.5*(tau_eff_f(tk,tj+1,ti) + tau_eff_f(tk,tj,ti));
-                // Simpson's 1/3 rule:
-                // tau_eff(tk,tj,ti) = tau_eff(tk,tj-2,ti) + dx2/3.0*(rhokappa(tk,tj-2,ti)*(1.0 - q_int(tk,tj-2,ti)/F_inf) + 4.0*rhokappa(tk,tj-1,ti)*(1.0 - q_int(tk,tj-1,ti)/F_inf) + rhokappa(tk,tj,ti)*(1.0 - q_int(tk,tj,ti)/F_inf));
-                // Trapezoidal rule:
-                // tau_eff(tk,tj,ti) = dx2/2.0* (rhokappa(tk,tj,ti)*(1.0 - q_int(tk,tj,ti)/F_inf) + rhokappa(tk,tj-1,ti)*(1.0 - q_int(tk,tj-1,ti)/F_inf)) + tau_eff(tk,tj-1,ti);
-              }
-            }
-          }
-        } else {
-          std::stringstream msg;
-          msg << "### FATAL ERROR in disk_snowline_2D_RT.cpp ProblemGenerator"   << std::endl
-              << "This problem prohibits level > 0 currently"
-              << "with error_output=true."  << std::endl;
-            ATHENA_ERROR(msg);
-        }
-      }
-
-      // step 4: Get temperature
-      for (int bn=0; bn<nblocal; ++bn) {
-        MeshBlock *pmb = my_blocks(bn);
-        LogicalLocation &loc = pmb->loc;
-        if (loc.level == root_level) { // root level
-          int istart = pmb->is; int iend = pmb->ie; int NGHOST_ti = NGHOST;
-          if (pmb->pbval->block_bcs[BoundaryFace::inner_x1] == BoundaryFlag::user){
-            istart = pmb->is-NGHOST;
-            NGHOST_ti = 0;
-          }else if (pmb->pbval->block_bcs[BoundaryFace::outer_x1] == BoundaryFlag::user){
-            iend = pmb->ie+NGHOST;
-          }
-          for (int k=pmb->ks; k<=pmb->ke; k++) {
-            for (int j=pmb->js; j<=pmb->je; j++) {
-              for (int i=istart; i<=iend; i++) {
-                int ti = static_cast<int>(loc.lx1)*pmb->block_size.nx1+(i-istart)+ NGHOST_ti;
-                int tj = static_cast<int>(loc.lx2)*pmb->block_size.nx2+(j-pmb->js)+ NGHOST;
-                int tk = static_cast<int>(loc.lx3)*pmb->block_size.nx3+(k-pmb->ks);
-
-                Real rad(0.0), phi(0.0), z(0.0); // cylindrical coordinate
-                GetCylCoord(pmb->pcoord, rad, phi, z, i, j, k);
-                
-                Real rho_gas = pmb->phydro->w(IDN,k,j,i);
-                Real rho_peb = pmb->pdustfluids->df_w(0,k,j,i) + pmb->pdustfluids->df_w(4,k,j,i);
-                Real fv = pmb->pdustfluids->df_w(4*(vapor_id),k,j,i) / rho_gas;
-                Real kappa = Get_kappa(rho_peb/rho_gas, fv);
-                Real F_inf = q_int_f(tk, mesh_size.nx2+NGHOST, ti);
-                Real T_eff = std::pow(F_inf/(Constants::sigma_cgs/UNIT_FLX), 0.25);
-                
-                Real &Tem = pmb->phydro->Tem(k, j, i);
-                Real Tem0 = Tem;
-                Tem = 0.75*tau_eff(tk,tj,ti) + std::sqrt(3.0)/4.0 +  q_z(tk,tj,ti)/(4.0*rhokappa(tk,tj,ti)*F_inf);
-                Tem = std::pow(Tem, 0.25)*T_eff;
-
-                if(std::isnan(Tem)){
-                  std::cout << "Tem = " << Tem << std::endl;
-                  std::cout << "F_inf = " << F_inf << std::endl;
-                  std::cout << "ti, tj = " << ti << " " << tj << std::endl;
-                  std::cout << "tau_eff = " << tau_eff(tk,tj,ti) << std::endl;
-                  std::cout << "q_z = " << q_z(tk,tj,ti) << std::endl;
-                  quick_exit(1);
-                }
-
-                // beta-cooling //////////////////////
-                Real omega_dyn = std::sqrt(gm0/(SQR(rad)*rad));
-                Real t_cool = beta / omega_dyn;
-                if (time < t_iterate){
-                  // when do iteration for T, rho, don't need long relaxing timescale
-                  t_cool = 50.0/ omega_dyn;
-                }
-                Real dT = (Tem - Tem0)/t_cool*dt;
-                Tem = Tem0 + dT;
-                //////////////////////////////////////
-
-                // store the whole temperature array.  
-                Tem_active(tk,tj,ti) = Tem;
-              }
-            }
-          }
-        } else {
-          std::stringstream msg;
-          msg << "### FATAL ERROR in disk_snowline_2D_RT.cpp ProblemGenerator"   << std::endl
-              << "This problem prohibits level > 0 currently"
-              << "with error_output=true."  << std::endl;
-            ATHENA_ERROR(msg);
-        }
-      }
-    }
-  }
-
-  // reset q_latent, q_diff;
-  for (int bn=0; bn<nblocal; ++bn) {
-    MeshBlock *pmb = my_blocks(bn);
-    LogicalLocation &loc = pmb->loc;
-    if (loc.level == root_level) { // root level
-      for (int k=pmb->ks; k<=pmb->ke; k++) {
-        for (int j=pmb->js; j<=pmb->je; j++) {
-          for (int i=pmb->is; i<=pmb->ie; i++) {
-            // (Yu, 2025-11-16) Updated to use PhaseChange module arrays
-            // reset q_latent and copy its value to dfv_dt:
-            pmb->user_out_var(4,k,j,i) = pmb->pphase_change->q_latent(k,j,i);
-            pmb->user_out_var(10,k,j,i) = pmb->pphase_change->q_diff(k,j,i);
-            pmb->pphase_change->q_latent(k,j,i) = 0.0;
-            pmb->pphase_change->q_diff(k,j,i) = 0.0;
-          }
-        }
-      }
-    }
-  }
-  ////////////////////////////////////////////////////////////////
-
-  // step 5: integrate over (mu m_p g)/(k_B/T) (z = infty -> 0)
-  for (int bn=0; bn<nblocal; ++bn) {
-    MeshBlock *pmb = my_blocks(bn);
-    LogicalLocation &loc = pmb->loc;
-    if (loc.level == root_level) { // root level
-      int istart = pmb->is; int iend = pmb->ie; int NGHOST_ti = NGHOST;
-      if (pmb->pbval->block_bcs[BoundaryFace::inner_x1] == BoundaryFlag::user){
-        istart = pmb->is-NGHOST;
-        NGHOST_ti = 0;
-      }else if (pmb->pbval->block_bcs[BoundaryFace::outer_x1] == BoundaryFlag::user){
-        iend = pmb->ie+NGHOST;
-      }
-      for (int k=pmb->ks; k<=pmb->ke; k++) {
-        for (int j=pmb->js; j<=pmb->je; j++) {
-          for (int i=istart; i<=iend; i++) {
-            int ti = static_cast<int>(loc.lx1)*pmb->block_size.nx1+(i-istart)+ NGHOST_ti;
-            int tj = static_cast<int>(loc.lx2)*pmb->block_size.nx2+(j-pmb->js)+ NGHOST;
-            int tk = static_cast<int>(loc.lx3)*pmb->block_size.nx3+(k-pmb->ks);
-            
-            Real rad, phi, z;
-            GetCylCoord(pmb->pcoord, rad, phi, z, i, j, k);
-            Real dx2 = pmb->pcoord->dx2f(j)* pmb->pcoord->x1v(i);
-            Real grav_z = -gm0*z/std::pow(rad,3.0);
-            Real fv = pmb->pdustfluids->df_w(4*(vapor_id),k,j,i) / pmb->phydro->w(IDN,k,j,i);
-            Real mu = Get_mu(fv);
-
-            int_1(tk,tj,ti) = mu*KELVIN*grav_z/Tem_active(tk,tj,ti) *dx2 + int_1(tk,tj-1,ti);
-          }
-        }
-      }
-    } else {
-      std::stringstream msg;
-      msg << "### FATAL ERROR in disk_snowline_2D_RT.cpp ProblemGenerator"   << std::endl
-          << "This problem prohibits level > 0 currently"
-          << "with error_output=true."  << std::endl;
-        ATHENA_ERROR(msg);
-    }
-  }
-
-  // step 6: integrate over T_mid/T(z) * exp(int_2)
-  for (int bn=0; bn<nblocal; ++bn) {
-    MeshBlock *pmb = my_blocks(bn);
-    LogicalLocation &loc = pmb->loc;
-    if (loc.level == root_level) { // root level
-      int istart = pmb->is; int iend = pmb->ie; int NGHOST_ti = NGHOST;
-      if (pmb->pbval->block_bcs[BoundaryFace::inner_x1] == BoundaryFlag::user){
-        istart = pmb->is-NGHOST;
-        NGHOST_ti = 0;
-      }else if (pmb->pbval->block_bcs[BoundaryFace::outer_x1] == BoundaryFlag::user){
-        iend = pmb->ie+NGHOST;
-      }
-      for (int k=pmb->ks; k<=pmb->ke; k++) {
-        for (int j=pmb->js; j<=pmb->je; j++) {
-          for (int i=istart; i<=iend; i++) {
-            int ti = static_cast<int>(loc.lx1)*pmb->block_size.nx1+(i-istart)+ NGHOST_ti;
-            int tj = static_cast<int>(loc.lx2)*pmb->block_size.nx2+(j-pmb->js)+ NGHOST;
-            int tk = static_cast<int>(loc.lx3)*pmb->block_size.nx3+(k-pmb->ks);
-            
-            Real Tem_mid = Tem_active(tk,mesh_size.nx2+NGHOST-1,ti);
-            Real int_1_mid = int_1(tk,mesh_size.nx2+NGHOST-1,ti);
-            Real dx2 = pmb->pcoord->dx2f(j)* pmb->pcoord->x1v(i);
-
-            int_2(tk,tj,ti) = Tem_mid/Tem_active(tk,tj,ti) * std::exp(int_1_mid - int_1(tk,tj,ti))*dx2 + int_2(tk,tj-1,ti);
-          }
-        }
-      }
-    } else {
-      std::stringstream msg;
-      msg << "### FATAL ERROR in disk_snowline_2D_RT.cpp ProblemGenerator"   << std::endl
-          << "This problem prohibits level > 0 currently"
-          << "with error_output=true."  << std::endl;
-        ATHENA_ERROR(msg);
-    }
-  }
-
-  // step 7: assign rho_z
-
-  for (int bn=0; bn<nblocal; ++bn) {
-    MeshBlock *pmb = my_blocks(bn);
-    LogicalLocation &loc = pmb->loc;
-    if (loc.level == root_level) { // root level
-      int istart = pmb->is; int iend = pmb->ie; int NGHOST_ti = NGHOST;
-      if (pmb->pbval->block_bcs[BoundaryFace::inner_x1] == BoundaryFlag::user){
-        istart = pmb->is-NGHOST;
-        NGHOST_ti = 0;
-      }else if (pmb->pbval->block_bcs[BoundaryFace::outer_x1] == BoundaryFlag::user){
-        iend = pmb->ie+NGHOST;
-      }
-      for (int k=pmb->ks; k<=pmb->ke; k++) {
-        for (int j=pmb->js; j<=pmb->je; j++) {
-          for (int i=istart; i<=iend; i++) {
-            int ti = static_cast<int>(loc.lx1)*pmb->block_size.nx1+(i-istart)+ NGHOST_ti;
-            int tj = static_cast<int>(loc.lx2)*pmb->block_size.nx2+(j-pmb->js)+ NGHOST;
-            int tk = static_cast<int>(loc.lx3)*pmb->block_size.nx3+(k-pmb->ks);
-
-            Real rad, phi, z;
-            GetCylCoord(pmb->pcoord, rad, phi, z, i, j, k);
-            Real x1 = pmb->pcoord->x1v(i);
-            Real nu_gas = alpha_vis*std::pow(rad/r0, nu_slope);
-            
-            Real Tem_mid = Tem_active(tk,mesh_size.nx2+NGHOST-1,ti);
-            Real int_1_mid = int_1(tk,mesh_size.nx2+NGHOST-1,ti);
-            Real sigma = std::fabs(Mdot_gas)/(3.0*PI*nu_gas);
-            Real rho_mid = sigma/ (int_2(tk,mesh_size.nx2+NGHOST-1,ti) - int_2(tk,NGHOST,ti));
-
-            rho_z(tk,tj,ti) = rho_mid*Tem_mid/Tem_active(tk,tj,ti)* std::exp(int_1_mid - int_1(tk,tj,ti));
-            rho_z(tk,tj,ti) = std::fmax(rho_z(tk,tj,ti), dfloor+dffloor);
-
-            // inner bc
-            if(time > t_iterate and pmb->pbval->block_bcs[BoundaryFace::inner_x1] == BoundaryFlag::user and x1 < x1min){
-              Real x1_active = pmb->pcoord->x1v(pmb->is);
-              Real x1_ghost = pmb->pcoord->x1v(i);
-              rho_z(tk,tj,ti) = (pmb->phydro->w(IDN,k,j,pmb->is) -pmb->pdustfluids->df_w(4*(vapor_id),k,j,pmb->is)) * SQR(x1_active)/SQR(x1_ghost);
-              // rho_z(tk,tj,ti) = std::exp(2.0*std::log(pmb->phydro->w(IDN, k, j, i+1)) - std::log(pmb->phydro->w(IDN, k, j, i+2)));
-            }
-            // outer bc
-            // if(time > t_iterate and pmb->pbval->block_bcs[BoundaryFace::outer_x1] == BoundaryFlag::user and x1 > x1max){
-            //   // Real x1_active = pmb->pcoord->x1v(pmb->ie);
-            //   // Real x1_ghost = pmb->pcoord->x1v(i);
-            //   // rho_z(tk,tj,ti) = pmb->phydro->w(IDN,k,j,pmb->ie) * SQR(x1_active)/SQR(x1_ghost);
-            //   rho_z(tk,tj,ti) = std::exp(2.0*std::log(pmb->phydro->w(IDN, k, j, i-1)) - std::log(pmb->phydro->w(IDN, k, j, i-2)));
-            // }
-          }
-        }
-      }
-    } else {
-      std::stringstream msg;
-      msg << "### FATAL ERROR in disk_snowline_2D_RT.cpp ProblemGenerator"   << std::endl
-          << "This problem prohibits level > 0 currently"
-          << "with error_output=true."  << std::endl;
-        ATHENA_ERROR(msg);
-    }
-  }
-
+  // for (int bn=0; bn<nblocal; ++bn) {
+  //   MeshBlock *pmb = my_blocks(bn);
+  //   LogicalLocation &loc = pmb->loc;
+  //   if (loc.level == root_level) { // root level
+  //     int istart = pmb->is; int iend = pmb->ie; int NGHOST_ti = NGHOST;
+  //     if (pmb->pbval->block_bcs[BoundaryFace::inner_x1] == BoundaryFlag::user){
+  //       istart = pmb->is;
+  //       NGHOST_ti = 2;
+  //     }else if (pmb->pbval->block_bcs[BoundaryFace::outer_x1] == BoundaryFlag::user){
+  //       iend = pmb->ie+NGHOST;
+  //     }
+  //     for (int k=pmb->ks; k<=pmb->ke; k++) {
+  //       for (int j=pmb->js; j<=pmb->je; j++) {
+  //         for (int i=istart; i<=iend; i++) {
+  //           int ti = i+ NGHOST_ti;
+  //           int tj = static_cast<int>(loc.lx2)*pmb->block_size.nx2+(j-pmb->js);
+  //           int tk = static_cast<int>(loc.lx3)*pmb->block_size.nx3+(k-pmb->ks);
+  //
+  //           Real rad, phi, z;
+  //           GetCylCoord(pmb->pcoord, rad, phi, z, i, j, k);
+  //           Real x1 = pmb->pcoord->x1v(i);
+  //           Real nu_gas = alpha_vis*std::pow(rad/r0, nu_slope);
+  //
+  //           Real Tem_mid = pmb->phydro->Tem(tk,tj,mesh_size.nx1+NGHOST-1); //the temperature always stay the same. 
+  //           Real mu = Get_mu(0.0);
+  //           Real cs2 = Tem_mid/(KELVIN*mu);
+  //           Real H_gas = std::sqrt(cs2)/std::sqrt(gm0/(rad*rad*rad));
+  //           Real sigma = std::fabs(Mdot_gas)/(3.0*PI*nu_gas);
+  //
+  //           rho_z(tk,tj,ti) = sigma;
+  //           rho_z(tk,tj,ti) = std::fmax(rho_z(tk,tj,ti), dfloor+dffloor);
+  //
+  //           // inner bc
+  //           if(time > t_iterate and pmb->pbval->block_bcs[BoundaryFace::inner_x1] == BoundaryFlag::user and x1 < x1min){
+  //             Real x1_active = pmb->pcoord->x1v(pmb->is);
+  //             Real x1_ghost = pmb->pcoord->x1v(i);
+  //             rho_z(tk,tj,ti) = (pmb->phydro->w(IDN,k,j,pmb->is) -pmb->pdustfluids->df_w(4*(vapor_id),k,j,pmb->is)) * SQR(x1_active)/SQR(x1_ghost);
+  //             if (rho_z(tk,tj,ti) < dfloor+dffloor){
+  //               std::cout << "Warning: rho_z at inner ghost zone is below floor at (k,j,i)=("<<k<<","<<j<<","<<i<<")!" << std::endl;
+  //             }
+  //             // rho_z(tk,tj,ti) = std::exp(2.0*std::log(pmb->phydro->w(IDN, k, j, i+1)) - std::log(pmb->phydro->w(IDN, k, j, i+2)));
+  //           }
+  //           // outer bc
+  //           // if(time > t_iterate and pmb->pbval->block_bcs[BoundaryFace::outer_x1] == BoundaryFlag::user and x1 > x1max){
+  //           //   // Real x1_active = pmb->pcoord->x1v(pmb->ie);
+  //           //   // Real x1_ghost = pmb->pcoord->x1v(i);
+  //           //   // rho_z(tk,tj,ti) = pmb->phydro->w(IDN,k,j,pmb->ie) * SQR(x1_active)/SQR(x1_ghost);
+  //           //   rho_z(tk,tj,ti) = std::exp(2.0*std::log(pmb->phydro->w(IDN, k, j, i-1)) - std::log(pmb->phydro->w(IDN, k, j, i-2)));
+  //           // }
+  //         }
+  //       }
+  //     }
+  //   } else {
+  //     std::stringstream msg;
+  //     msg << "### FATAL ERROR in disk_snowline_2D_RT.cpp ProblemGenerator"   << std::endl
+  //         << "This problem prohibits level > 0 currently"
+  //         << "with error_output=true."  << std::endl;
+  //       ATHENA_ERROR(msg);
+  //   }
+  // }
   // Get the surface density
-  AthenaArray<Real> sigma_gas_est;
-  sigma_gas_est.NewAthenaArray(NGHOST);
-  for (int bn=0; bn<nblocal; ++bn) {
-    MeshBlock *pmb = my_blocks(bn);
-    if (pmb->pbval->block_bcs[BoundaryFace::inner_x1] == BoundaryFlag::user){
-      int tk = 0;
-
-      for (int k=pmb->ks; k<=pmb->ke; k++) {
-        for (int j=pmb->js; j<=pmb->je; j++) {
-          for (int i = 0; i < pmb->is; i++){
-            int ti = i;
-            int tj = static_cast<int>(pmb->loc.lx2)*pmb->block_size.nx2+(j-pmb->js)+ NGHOST;
-            Real dx2 = pmb->pcoord->dx2f(j)* pmb->pcoord->x1v(i);
-            sigma_gas_est(i) += rho_z(tk,tj,ti)*dx2;
-          }
-        }
-      }
-    }
-  }
-
-  for (int bn=0; bn<nblocal; ++bn) { 
-    MeshBlock *pmb = my_blocks(bn);
-    if (pmb->pbval->block_bcs[BoundaryFace::inner_x1] == BoundaryFlag::user){
-      int tk = 0;
-
-      for (int k=pmb->ks; k<=pmb->ke; k++) {
-        for (int j=pmb->js; j<=pmb->je; j++) {
-          for (int i = 0; i < pmb->is; i++){
-            int ti = i;
-            int tj = static_cast<int>(pmb->loc.lx2)*pmb->block_size.nx2+(j-pmb->js)+ NGHOST;
-            Real rad, phi, z;
-            GetCylCoord(pmb->pcoord, rad, phi, z, i, j, k);
-            Real nu_gas = alpha_vis*std::pow(rad/r0, nu_slope);
-            Real sigma0 = std::fabs(Mdot_gas)/(3.0*PI*nu_gas);
-            rho_z(tk,tj,ti) *= sigma0/sigma_gas_est(i);
-          }
-        }
-      }
-    }
-  }
-
+  // AthenaArray<Real> sigma_gas_est;
+  // sigma_gas_est.NewAthenaArray(NGHOST);
+  // for (int bn=0; bn<nblocal; ++bn) {
+  //   MeshBlock *pmb = my_blocks(bn);
+  //   if (pmb->pbval->block_bcs[BoundaryFace::inner_x1] == BoundaryFlag::user){
+  //     int tk = 0;
+  //
+  //     for (int k=pmb->ks; k<=pmb->ke; k++) {
+  //       for (int j=pmb->js; j<=pmb->je; j++) {
+  //         for (int i = 0; i < pmb->is; i++){
+  //           int ti = i;
+  //           int tj = static_cast<int>(pmb->loc.lx2)*pmb->block_size.nx2+(j-pmb->js)+ NGHOST;
+  //           Real dx2 = pmb->pcoord->dx2f(j)* pmb->pcoord->x1v(i);
+  //           sigma_gas_est(i) += rho_z(tk,tj,ti)*dx2;
+  //         }
+  //       }
+  //     }
+  //   }
+  // }
+  //
+  // for (int bn=0; bn<nblocal; ++bn) { 
+  //   MeshBlock *pmb = my_blocks(bn);
+  //   if (pmb->pbval->block_bcs[BoundaryFace::inner_x1] == BoundaryFlag::user){
+  //     int tk = 0;
+  //
+  //     for (int k=pmb->ks; k<=pmb->ke; k++) {
+  //       for (int j=pmb->js; j<=pmb->je; j++) {
+  //         for (int i = 0; i < pmb->is; i++){
+  //           int ti = i;
+  //           int tj = static_cast<int>(pmb->loc.lx2)*pmb->block_size.nx2+(j-pmb->js)+ NGHOST;
+  //           Real rad, phi, z;
+  //           GetCylCoord(pmb->pcoord, rad, phi, z, i, j, k);
+  //           Real nu_gas = alpha_vis*std::pow(rad/r0, nu_slope);
+  //           Real sigma0 = std::fabs(Mdot_gas)/(3.0*PI*nu_gas);
+  //           rho_z(tk,tj,ti) *= sigma0/sigma_gas_est(i);
+  //         }
+  //       }
+  //     }
+  //   }
+  // }
 
   // Get the total mass flux;
   Real Mdot_est = 0.0;
-  AthenaArray<Real> Mdot_peb, Mdot_peb_est;
-  Mdot_peb.NewAthenaArray(NDUSTFLUIDS-NVapor);
-  Mdot_peb_est.NewAthenaArray(NDUSTFLUIDS-NVapor);
+  AthenaArray<Real> Mdot_peb_est, Mdot_peb;
+  Mdot_peb_est.NewAthenaArray(NDUSTFLUIDS);
+  Mdot_peb.NewAthenaArray(NDUSTFLUIDS);
   // Initialize to zero (only pebble compositions will be set, vapor is ignored)
-  for (int n=0; n<NDUSTFLUIDS-NVapor; n++) {
+  for (int n=0; n<NDUSTFLUIDS; n++) {
     Mdot_peb_est(n) = 0.0;
-    Mdot_peb(n) = p2g_flux[n]*Mdot_gas;
+    Mdot_peb(n) = p2g_flux[n] * Mdot_gas;
   }
+  // Real Mdot_peb = f_ICE_inter0*p2g_flux*Mdot_gas;
 
-  for (int bn=0; bn<nblocal; ++bn) {
-    MeshBlock *pmb = my_blocks(bn);
-    if (pmb->pbval->block_bcs[BoundaryFace::outer_x1] == BoundaryFlag::user){
-      int tk = 0;
-      int ti = pmb->pmy_mesh->mesh_size.nx1 + NGHOST;
-      int tj_mid = pmb->pmy_mesh->mesh_size.nx2 + NGHOST-1;
-      Real Tem_mid = pmb->pmy_mesh->ruser_mesh_data[4](tk,tj_mid,ti);
-      Real Tem_mid_ghost = pmb->pmy_mesh->ruser_mesh_data[4](tk,tj_mid,ti+1);
+    MeshBlock *pmb = my_blocks(0);
+  if (pmb->pbval->block_bcs[BoundaryFace::outer_x1] == BoundaryFlag::user){
+    int tk = 0;
+    int ti = pmb->pmy_mesh->mesh_size.nx1 +NGHOST;
+    int tj_mid = 0;
+    Real Tem_mid = pmb->phydro->Tem(0,0,pmb->ie);
+    Real Tem_mid_ghost = pmb->phydro->Tem(0,0,pmb->ie+1);
 
-      for (int k=pmb->ks; k<=pmb->ke; k++) {
-        for (int j=pmb->js; j<=pmb->je; j++) {
-          int tj = static_cast<int>(pmb->loc.lx2)*pmb->block_size.nx2+(j-pmb->js)+ NGHOST;
-          Real x2 = pmb->pcoord->x2v(j);
-          Real dx2 = pmb->pcoord->dx2v(j);
-          Real x1_active = pmb->pcoord->x1v(pmb->ie);
-          Real ds_ghost = 2.0*pmb->pcoord->GetFace1Area(k,j,pmb->ie+1);
-          
-          Real rad_active(0.0), phi_active(0.0), z_active(0.0);
-          Real rad_ghost(0.0),  phi_ghost(0.0),  z_ghost(0.0);
-          GetCylCoord(pmb->pcoord, rad_active, phi_active, z_active, pmb->ie, j, k);
-          GetCylCoord(pmb->pcoord, rad_ghost, phi_ghost, z_ghost, pmb->ie+1, j, k);
+    for (int k=pmb->ks; k<=pmb->ke; k++) {
+      for (int j=pmb->js; j<=pmb->je; j++) {
+        int tj = static_cast<int>(pmb->loc.lx2)*pmb->block_size.nx2+(j-pmb->js);
+        Real x2 = pmb->pcoord->x2v(j);
+        Real dx2 = pmb->pcoord->dx2v(j);
+        Real x1_active = pmb->pcoord->x1v(pmb->ie);
+        Real ds_ghost = 2.0*pmb->pcoord->GetFace1Area(k,j,pmb->ie+1);
+        
+        Real rad_active(0.0), phi_active(0.0), z_active(0.0);
+        Real rad_ghost(0.0),  phi_ghost(0.0),  z_ghost(0.0);
+        GetCylCoord(pmb->pcoord, rad_active, phi_active, z_active, pmb->ie, j, k);
+        GetCylCoord(pmb->pcoord, rad_ghost, phi_ghost, z_ghost, pmb->ie+1, j, k);
 
-          Real Tem_active = pmb->phydro->Tem(k, j, pmb->ie);
-          Real Tem_ghost = pmb->phydro->Tem(k, j, pmb->ie+1);
-          Real gas_rho0 = pmb->pmy_mesh->ruser_mesh_data[7](tk, tj, ti);
-          Real vr0 = Vr_ProfileCyl_gas_fv_T(rad_ghost, phi_ghost, z_ghost, 0.0, Tem_mid_ghost);
+        Real Tem_active = pmb->phydro->Tem(k, j, pmb->ie);
+        Real Tem_ghost = pmb->phydro->Tem(k, j, pmb->ie+1);
+        Real gas_rho0 = pmb->pmy_mesh->ruser_mesh_data[7](tk,tj,ti); // rho_mid from mesh data
+        Real vr0 = Vr_ProfileCyl_gas_fv_T(rad_ghost, phi_ghost, z_ghost, 0.0, Tem_mid_ghost);
 
-          // gas flux
-          pmb->phydro->inflx_x1(k,j,0) = gas_rho0*(vr0*std::sin(x2));
-          Mdot_est += pmb->phydro->inflx_x1(k,j,0)*ds_ghost;
+        // gas flux
+        pmb->phydro->inflx_x1(k,j,0) = gas_rho0*vr0;
+        Mdot_est += pmb->phydro->inflx_x1(k,j,0)*ds_ghost;
 
-          // pebble flux:
-          Real v_drift_peb = -0.004; // random drift velocity
-          Real dust_vel1 = v_drift_peb*std::sin(x2);
-          
-          for (int p=0; p<N_P; p++) {
-            for (int n=0; n<N_Z; n++) {
-              int dust_id = N_Z * p + n;
-              Real sigma_peb = 2.0*Mdot_peb(dust_id) /(v_drift_peb * 2.0*PI*rad_active);
-              Real cs0 = std::sqrt(Tem_mid/(mu_xy*KELVIN));
-              Real h_peb = Hratio[0]* cs0/std::sqrt(gm0/(rad_active*SQR(rad_active)));
-              Real rho_peb_mid = sigma_peb / (sqrt(2.0*PI)*h_peb);
-              Real dust_rho = rho_peb_mid* std::exp(-0.5*SQR(z_active/h_peb));
-              dust_rho = (dust_rho > dffloor) ? dust_rho : dffloor;
+        // pebble flux:
+        Real v_drift_peb = -0.004; // random drift velocity
+        Real dust_vel1 = v_drift_peb*std::sin(x2);
+        
+        for (int p=0; p<N_P; p++) {
+          for (int n=0; n<N_Z; n++) {
+            int dust_id = N_Z * p + n;
 
-              pmb->pdustfluids->inflx_dust_x1(dust_id,k,j,0) = dust_rho*dust_vel1;
-              Mdot_peb_est(dust_id) += pmb->pdustfluids->inflx_dust_x1(dust_id,k,j,0)*ds_ghost;
-            }
+            Real sigma_peb = 2.0*Mdot_peb(dust_id) /(v_drift_peb * 2.0*PI*rad_active);
+            Real cs0 = std::sqrt(Tem_mid/(mu_xy*KELVIN));
+            Real h_peb = Hratio[n]* cs0/std::sqrt(gm0/(rad_active*SQR(rad_active)));
+            Real rho_peb_mid = sigma_peb / (sqrt(2.0*PI)*h_peb);
+            Real dust_rho = rho_peb_mid* std::exp(-0.5*SQR(z_active/h_peb));
+            dust_rho = (dust_rho > dffloor) ? dust_rho : dffloor;
+        
+            pmb->pdustfluids->inflx_dust_x1(dust_id,k,j,0) = dust_rho*dust_vel1;
+            Mdot_peb_est(dust_id) += pmb->pdustfluids->inflx_dust_x1(dust_id,k,j,0)*ds_ghost;
           }
         }
       }
     }
   }
 
-  Real flx_ratio = Mdot_gas / Mdot_est;
+  pmb->phydro->inflx_x1(0,0,0) *= 0.0;
   AthenaArray<Real> flx_peb_ratio;
-  flx_peb_ratio.NewAthenaArray(NDUSTFLUIDS-NVapor);
+  flx_peb_ratio.NewAthenaArray(NDUSTFLUIDS);
   // Calculate flux ratio for each pebble composition (vapor entries remain uninitialized but unused)
   for (int p=0; p<N_P; p++) {
     for (int n=0; n<N_Z; n++) {
@@ -1065,28 +846,17 @@ void Mesh::UserWorkInLoop() {
     }
   }
 
-  for (int bn=0; bn<nblocal; ++bn) {
-    MeshBlock *pmb = my_blocks(bn);
-    if (pmb->pbval->block_bcs[BoundaryFace::outer_x1] == BoundaryFlag::user){
-      for (int k=pmb->ks; k<=pmb->ke; k++) {
-        for (int j=pmb->js; j<=pmb->je; j++) {
-          pmb->phydro->inflx_x1(k,j,0) *= flx_ratio;
-          for (int p=0; p<N_P; p++) {
-            for (int n=0; n<N_Z; n++) {
-              int dust_id = N_Z * p + n;
-              if(time < dust_start_injection){
-                pmb->pdustfluids->inflx_dust_x1(dust_id,k,j,0) = 0.0;
-              } else {
-                pmb->pdustfluids->inflx_dust_x1(dust_id,k,j,0) *= flx_peb_ratio(dust_id);
-              }
-            }
-          }
-        }
+  for (int p=0; p<N_P; p++) {
+    for (int n=0; n<N_Z; n++) {
+      int dust_id = N_Z * p + n;
+      if(time < dust_start_injection){
+        pmb->pdustfluids->inflx_dust_x1(dust_id,0,0,0) = 0.0;
+      } else {
+        pmb->pdustfluids->inflx_dust_x1(dust_id,0,0,0) *= 0.0; 
       }
     }
   }
 }
-
 
 void MeshBlock::UserWorkInLoop(){
   int dk     = NGHOST;
@@ -1097,14 +867,8 @@ void MeshBlock::UserWorkInLoop(){
   int jl = js - dj;     int ju = je + dj;
   int il = is - NGHOST; int iu = ie + NGHOST;
 
-  Real &dt   = pmy_mesh->dt;
-  Real &time = pmy_mesh->time;
-
-  // wave damping
-  if (Theta_Gas_Damping_Flag) {
-    UpperWaveDampingGas(this, time, dt, il, iu, jl, ju, kl, ku, phydro->w, phydro->u);
-    // LowerWaveDampingGas(this, time, dt, il, iu, jl, ju, kl, ku, phydro->w, phydro->u);
-  }
+  // Real &dt   = pmy_mesh->dt;
+  // Real &time = pmy_mesh->time;
 
   for (int k=kl; k<=ku; ++k) {
     for (int j=jl; j<=ju; ++j) {
@@ -1140,39 +904,41 @@ void MeshBlock::UserWorkInLoop(){
         dust_mom3 = dust_den*gas_vel3;
 
         // copy refractory velocity to ice for each pebble
-        for (int p = 0; p < N_P; ++p) {
-          int refrac_id = GetRefracDustId(p);
-          int ice_id = GetIceDustId(p);
+        if (N_Z > 1) {
+          for (int p = 0; p < N_P; ++p) {
+            int refrac_id = N_Z*(p+1)-1; // last index in each pebble size bin 
+            int ice_id = N_Z*p;          // first index in each pebble size bin 
 
-          int refrac_rho_id  = 4*refrac_id;
-          int refrac_v1_id   = refrac_rho_id + 1;
-          int refrac_v2_id   = refrac_rho_id + 2;
-          int refrac_v3_id   = refrac_rho_id + 3;
-          
-          const Real &d1_vel1 = pdustfluids->df_w(refrac_v1_id,  k, j, i);
-          const Real &d1_vel2 = pdustfluids->df_w(refrac_v2_id,  k, j, i);
-          const Real &d1_vel3 = pdustfluids->df_w(refrac_v3_id,  k, j, i);
-          
-          int ice_rho_id  = 4*ice_id;
-          int ice_v1_id   = ice_rho_id + 1;
-          int ice_v2_id   = ice_rho_id + 2;
-          int ice_v3_id   = ice_rho_id + 3;
-          
-          Real &d0_vel1 = pdustfluids->df_w(ice_v1_id,  k, j, i);
-          Real &d0_vel2 = pdustfluids->df_w(ice_v2_id,  k, j, i);
-          Real &d0_vel3 = pdustfluids->df_w(ice_v3_id,  k, j, i);
+            int refrac_rho_id  = 4*refrac_id;
+            int refrac_v1_id   = refrac_rho_id + 1;
+            int refrac_v2_id   = refrac_rho_id + 2;
+            int refrac_v3_id   = refrac_rho_id + 3;
+            
+            const Real &d1_vel1 = pdustfluids->df_w(refrac_v1_id,  k, j, i);
+            const Real &d1_vel2 = pdustfluids->df_w(refrac_v2_id,  k, j, i);
+            const Real &d1_vel3 = pdustfluids->df_w(refrac_v3_id,  k, j, i);
+            
+            int ice_rho_id  = 4*ice_id;
+            int ice_v1_id   = ice_rho_id + 1;
+            int ice_v2_id   = ice_rho_id + 2;
+            int ice_v3_id   = ice_rho_id + 3;
+            
+            Real &d0_vel1 = pdustfluids->df_w(ice_v1_id,  k, j, i);
+            Real &d0_vel2 = pdustfluids->df_w(ice_v2_id,  k, j, i);
+            Real &d0_vel3 = pdustfluids->df_w(ice_v3_id,  k, j, i);
 
-          const Real &d0_den  = pdustfluids->df_u(ice_rho_id, k, j, i);
-          Real &d0_mom1 = pdustfluids->df_u(ice_v1_id,  k, j, i);
-          Real &d0_mom2 = pdustfluids->df_u(ice_v2_id,  k, j, i);
-          Real &d0_mom3 = pdustfluids->df_u(ice_v3_id,  k, j, i);
+            const Real &d0_den  = pdustfluids->df_u(ice_rho_id, k, j, i);
+            Real &d0_mom1 = pdustfluids->df_u(ice_v1_id,  k, j, i);
+            Real &d0_mom2 = pdustfluids->df_u(ice_v2_id,  k, j, i);
+            Real &d0_mom3 = pdustfluids->df_u(ice_v3_id,  k, j, i);
 
-          d0_vel1 = d1_vel1;
-          d0_vel2 = d1_vel2;
-          d0_vel3 = d1_vel3;
-          d0_mom1 = d1_vel1*d0_den;
-          d0_mom2 = d1_vel2*d0_den;
-          d0_mom3 = d1_vel3*d0_den;
+            d0_vel1 = d1_vel1;
+            d0_vel2 = d1_vel2;
+            d0_vel3 = d1_vel3;
+            d0_mom1 = d1_vel1*d0_den;
+            d0_mom2 = d1_vel2*d0_den;
+            d0_mom3 = d1_vel3*d0_den;
+          }
         }
 
         // maybe do floor value here.
@@ -1241,33 +1007,44 @@ void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin){
         Real mu = Get_mu(fv);
         Real prs = rho_g*T/(mu*KELVIN);
         // output
-        user_out_var(0,k,j,i) = phydro->Tem(k,j,i);
-        int pebble0_ice_id = GetIceDustId(0);
-        int pebble0_refrac_id = GetRefracDustId(0);
-        user_out_var(1,k,j,i) = pdustfluids->stopping_time_array(pebble0_ice_id,k,j,i);
+        user_out_var(13,k,j,i) = phydro->Tem(k,j,i);
+        // user_out_var(1,k,j,i) = prs/rhoe_g + 1.0;
         // user_out_var(1,k,j,i) = phydro->hdif.kappa(HydroDiffusion::DiffProcess::aniso, k, j, i);
         if (pphase_change != nullptr && N_P > 0) {
           for (int p=0; p<N_P; p++) {
-            int pebble_ice_id = GetIceDustId(p);
-            int pebble_refrac_id = GetRefracDustId(p);
+            AthenaArray<Real> rho_comps; //get the uid of density and density for each composition
+            rho_comps.NewAthenaArray(N_Z);
+            for (int n=0; n<N_Z; n++) {
+              Real comp_id = p*N_Z + n;
+              rho_comps(n) = pdustfluids->df_w(4*comp_id, k, j, i); // [code_density] 
+            }
             Real rho_Np = pphase_change->rho_Np_array(p, k, j, i); // [code_number_density]
-            Real rho_I = pdustfluids->df_w(4*pebble_ice_id, k, j, i); // ice for pebble p [code_density]
-            Real rho_sil = pdustfluids->df_w(4*pebble_refrac_id, k, j, i); // refractory for pebble p [code_density]
-            Real m_p = pphase_change->Get_m_p_from_rho_Np(rho_I, rho_sil, rho_Np); // [code_mass]
-            Real s_p = pphase_change->Get_s_p_from_m_p(m_p, rho_I, rho_sil); // [code_length]
-
+            
+            // Real rho_I = pdustfluids->df_w(4*p, k, j, i); // ice for pebble p [code_density]
+            // Real rho_sil = pdustfluids->df_w(4*(p*N_Z+1), k, j, i); // refractory for pebble p [code_density]
+            Real m_p = pphase_change->Get_m_p_from_rho_Np(rho_comps, rho_Np); // [code_mass]
+            Real s_p = pphase_change->Get_s_p_from_m_p(m_p, rho_comps); // [code_length]
             Units *punit = pmy_mesh->punit;
-            user_out_var(2+p,k,j,i) = s_p * punit->code_length_cgs; // Convert to CGS for output
+
+            // really no good idea to output this more elegently now.... [25.11.24]
+            user_out_var(p*5,k,j,i) = pdustfluids->stopping_time_array(p*N_Z,k,j,i);
+            user_out_var(p*5+1,k,j,i) = m_p * punit->code_mass_cgs; // Convert to CGS for output 
+            user_out_var(p*5+2,k,j,i) = s_p * punit->code_length_cgs; // Convert to CGS for output
+            user_out_var(p*5+3,k,j,i) = pdustfluids->df_flux[X1DIR](4*(p*N_Z),k,j,i);
           }
         }
+        // user_out_var(4,k,j,i) = pdustfluids->dfv_dt(k,j,i);
         
-        user_out_var(6,k,j,i) = pdustfluids->df_flux[X1DIR](pebble0_ice_id,k,j,i);
-        user_out_var(7,k,j,i) = pdustfluids->df_flux[X2DIR](pebble0_ice_id,k,j,i);
-        user_out_var(8,k,j,i) = pdustfluids->df_flux[X1DIR](4*(vapor_id),k,j,i);
-        user_out_var(9,k,j,i) = pdustfluids->df_flux[X2DIR](4*(vapor_id),k,j,i);
-        user_out_var(11,k,j,i) = phydro->flux[X1DIR](IDN,k,j,i);
-        user_out_var(12,k,j,i) = phydro->flux[X2DIR](IDN,k,j,i);
-        user_out_var(13,k,j,i) = pdustfluids->nu_dustfluids_array(vapor_id,k,j,i);
+        // user_out_var(6,k,j,i) = pdustfluids->df_flux[X1DIR](0,k,j,i);
+        // user_out_var(7,k,j,i) = pdustfluids->df_flux[X2DIR](0,k,j,i);
+        // user_out_var(8,k,j,i) = pdustfluids->df_flux[X1DIR](4*(vapor_id),k,j,i);
+        // user_out_var(9,k,j,i) = pdustfluids->df_flux[X2DIR](4*(vapor_id),k,j,i);
+        user_out_var(17,k,j,i) = phydro->flux[X1DIR](IDN,k,j,i);
+        user_out_var(18,k,j,i) = 0.0; 
+        user_out_var(10,k,j,i) = pdustfluids->nu_dustfluids_array(vapor_id,k,j,i);
+        user_out_var(11,k,j,i) = pdustfluids->df_flux[X1DIR](4*(vapor_id),k,j,i);
+        user_out_var(12,k,j,i) = 0.0; 
+
       }
     }
   }
@@ -1280,8 +1057,8 @@ void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin){
         int tk = static_cast<int>(loc.lx3)*block_size.nx3+(k-kl);
 
         // radiative heating rate, q_z
-        // user_out_var(2,k,j,i) = pmy_mesh->ruser_mesh_data[1](tk, tj, ti);
-        user_out_var(5,k,j,i) = pmy_mesh->ruser_mesh_data[2](tk, tj, ti);
+        user_out_var(20,k,j,i) = pmy_mesh->ruser_mesh_data[3](tk, tj, ti);
+        user_out_var(15,k,j,i) = pmy_mesh->ruser_mesh_data[2](tk, tj, ti);
       }
     }
   }
@@ -1303,8 +1080,16 @@ void MySource(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<
   
   RadiativeCondution(pmb, time, dt, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s);
   LocalIsothermalEOS(pmb, time, dt, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s);
-  if(N_Z > 0 and time > t_iterate){  // (Yu, 2025-11-16)
-    pmb->pphase_change->PhaseChangeSource(pmb, time, dt, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s);
+  // if(N_Z > 1 and time > t_iterate){  // (Yu, 2025-11-16)
+  //   pmb->pphase_change->PhaseChangeSource(pmb, time, dt, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s);
+  // }
+  AthenaArray<Real> v_frag;
+  v_frag.NewAthenaArray(N_P); 
+  v_frag(0) = 1000.0/pmb->pmy_mesh->punit->code_velocity_cgs; // fragmentation velocity for pebble size bin 0 [code_velocity]
+  v_frag(1) = 100.0/pmb->pmy_mesh->punit->code_velocity_cgs; // fragmentation velocity for pebble size bin 1 [code_velocity]
+  
+  if (N_P > 0 and time >dust_start_injection){
+    pmb->pphase_change->TriPodSource(pmb, time, dt, gm0, alpha_vis, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s, v_frag);
   }
 
   return;
@@ -1357,30 +1142,42 @@ void LocalIsothermalEOS(MeshBlock *pmb, const Real time, const Real dt, const At
           Real Tem;
           Tem = pmb->phydro->Tem(k, j, i);
 
-          if(time < t_iterate){
+          // don't know why ths gas_vel1_1 can be positive, so currently use this all the time
+          if(true){
             LogicalLocation &loc = pmb->loc;
             int ti = static_cast<int>(loc.lx1)*pmb->block_size.nx1+(i-pmb->is) + NGHOST;
-            int tj = static_cast<int>(loc.lx2)*pmb->block_size.nx2+(j-pmb->js)+ NGHOST;
-            int tj_mid = pmb->pmy_mesh->mesh_size.nx2 + NGHOST -1;
+            int tj = static_cast<int>(loc.lx2)*pmb->block_size.nx2+(j-pmb->js);
+            int tj_mid = pmb->pmy_mesh->mesh_size.nx2 -1;
             int tk = static_cast<int>(loc.lx3)*pmb->block_size.nx3+(k-pmb->ks);
             Real Tem_mid = pmb->pmy_mesh->ruser_mesh_data[4](tk,tj_mid,ti);
 
-            gas_dens = pmb->pmy_mesh->ruser_mesh_data[7](tk,tj,ti) + rho_v;
+            Real mu = mu_xy; // simple model, scale height indep. of mu
+            Real cs2 = Tem_mid/(mu*KELVIN);
+            Real omega = std::sqrt(gm0/(rad*rad*rad));
+            Real h_gas = std::sqrt(cs2)/omega; 
+            // gas_dens = pmb->pmy_mesh->ruser_mesh_data[7](tk,tj,ti) + rho_v;
             gas_dens = (gas_dens > dfloor +dffloor) ? gas_dens : (dfloor+dffloor);
-            if(time < 0.195){
-              gas_dens = DenProfileCyl_gas_fv_T(rad, phi, z, fv, Tem_mid) + rho_v;
-            }
+            gas_dens = (DenProfileCyl_gas_fv_T(rad, phi, z, fv, Tem_mid) + rho_v)*std::sqrt(2.0*PI)*h_gas; // reset to the desired density profile (with vapor contribution)
 
             Real v_acc_gas = -1.5*pmb->phydro->hdif.nu(HydroDiffusion::DiffProcess::alpha, k, j, i) / rad;
+            if (v_acc_gas >0.0) {
+            std::cout << "before iteration" << std::endl;
+              std::cout << "Warning: accretion velocity is positive at i,j,k = " << i << ", " << j << ", " << k << std::endl;
+              std::cout << "v_acc_gas = " << v_acc_gas << std::endl;
+            }
             
-            gas_vel1_1 = v_acc_gas*std::sin(x2);
-            gas_vel2_1 = v_acc_gas*std::cos(x2);
-            gas_vel3_1 = VelProfileCyl_gas_fv_T(rad, phi, z, fv, Tem_mid);
+            gas_vel1_1 = v_acc_gas;
+            gas_vel2_1 = VelProfileCyl_gas_fv_T(rad, phi, z, fv, Tem_mid);
+            gas_vel3_1 = 0.0;
             if (pmb->porb->orbital_advection_defined)
               gas_vel3_1 -= vel_K;
           }
           ///////////////////////////////////////////////////////////////////
           
+          // if (gas_vel1_1 >0.0) {
+          //   std::cout << "after iteration" << std::endl;
+          //     std::cout << "Warning: accretion velocity is positive at i,j,k = " << i << ", " << j << ", " << k << std::endl;
+          // }
           // get pressure of local temperature
           Real mu = Get_mu(fv);
           Real press = gas_dens * Tem /(KELVIN*mu);
@@ -1401,7 +1198,6 @@ void RadiativeCondution(MeshBlock *pmb, const Real time, const Real dt, const At
       
     // radiative diffusion flx at x1, x2 direction
     AthenaArray<Real> &x1flux = pmb->phydro->hdif.cndflx[X1DIR];
-    AthenaArray<Real> &x2flux = pmb->phydro->hdif.cndflx[X2DIR];
 
     Real kappaf, dTdx;
     HydroDiffusion phdif = pmb->phydro->hdif;
@@ -1428,7 +1224,7 @@ void RadiativeCondution(MeshBlock *pmb, const Real time, const Real dt, const At
         for (int i=pmb->is; i<=pmb->ie; ++i) {
           LogicalLocation &loc = pmb->loc;
           int ti = static_cast<int>(loc.lx1)*pmb->block_size.nx1+(i-pmb->is)+ NGHOST;
-          int tj = static_cast<int>(loc.lx2)*pmb->block_size.nx2+(j-pmb->js)+ NGHOST;
+          int tj = static_cast<int>(loc.lx2)*pmb->block_size.nx2+(j-pmb->js);
           int tk = static_cast<int>(loc.lx3)*pmb->block_size.nx3+(k-pmb->ks);
           // reflecting boundary at disc midplane
           Real tau_vi = pmb->pmy_mesh->ruser_mesh_data[0](tk,tj,ti);
@@ -1442,8 +1238,8 @@ void RadiativeCondution(MeshBlock *pmb, const Real time, const Real dt, const At
             f_decay_art2 = 0.0;
           }
           Real f_decay_art3 = std::exp(-1.0/(tau_vi));
-          // pmb->pphase_change->q_diff(k, j, i) += dt/pmb->pmy_mesh->dt*(x1area(i+1)*x1flux(k,j,i+1) - x1area(i)*x1flux(k,j,i))/(-vol(i)) *f_decay_art*f_decay_art2*f_decay_art3;
-          pmb->pphase_change->q_diff(k, j, i) = 0.0;
+          pmb->pphase_change->q_diff(k, j, i) += dt/pmb->pmy_mesh->dt*(x1area(i+1)*x1flux(k,j,i+1) - x1area(i)*x1flux(k,j,i))/(-vol(i)) *f_decay_art*f_decay_art2*f_decay_art3;
+          // pmb->pphase_change->q_diff(k, j, i) = 0.0;
         }
         
         // do not include heat conduction in Athena++ steps
@@ -1491,10 +1287,17 @@ void MyStoppingTime(MeshBlock *pmb, const Real time, const AthenaArray<Real> &pr
           rho_dustfluid_array_pebble.NewAthenaArray(N_Z);
           
           // collect dustfluid of the same pebble (primitive variables)
-          for (int z = 0; z < N_Z; ++z) {
-            int dust_id = N_Z * p + z;
+          // [25.11.26]lzx: let's avoid using same variable name 'z' here
+          for (int zi = 0; zi < N_Z; ++zi) {
+            int dust_id = N_Z * p + zi;
             int rho_id = 4*dust_id;
-            rho_dustfluid_array_pebble(z) = prim_df(rho_id, k, j, i);
+            Real Tem = phydro->Tem(k, j, i);
+            Real mu = Get_mu(prim_df(4*(vapor_id), k, j, i)/gas_den);
+            Real cs2 = Tem/(mu*KELVIN); 
+            Real h_gas = std::sqrt(cs2)/omega_dyn; 
+            Real St = stopping_time(dust_id, k, j, i)*omega_dyn;
+            Real h_peb = h_gas/std::sqrt(1.0 + St/alpha_vis*(1.0 + 2.0*St)/(1.0 + St));
+            rho_dustfluid_array_pebble(zi) = prim_df(rho_id, k, j, i)/std::sqrt(2.0*PI)/h_peb;
           }
           
           // calculate stopping time for the pebble
@@ -1506,6 +1309,8 @@ void MyStoppingTime(MeshBlock *pmb, const Real time, const AthenaArray<Real> &pr
           t_stop = (t_stop > 0.5) ? 0.5 : t_stop;
           if(std::fabs(z) > 2.0 *std::pow((rad/r0), 1.5 + qvalue/2)){
             t_stop = 1.e-4;
+          } else {
+            t_stop = t_stop;
           }
           
           // apply stopping time to all compositions of this pebble
@@ -1563,7 +1368,7 @@ void MyDustDiffusivity(DustFluids *pdf, MeshBlock *pmb,
         // Loop over pebbles to calculate diffusivity per pebble
         for (int p = 0; p < N_P; ++p) {
           // Get stopping time for this pebble (all compositions have same stopping time)
-          int dust_id_first = GetRefracDustId(p); // first composition of pebble p
+          int dust_id_first = N_Z * p; // first composition of pebble p
           Real t_stop = stopping_time(dust_id_first, k, j, i);
           
           // Calculate diffusivity for all compositions of this pebble
@@ -1584,34 +1389,35 @@ void MyDustDiffusivity(DustFluids *pdf, MeshBlock *pmb,
   return;
 }
 
-void MyConductivity(HydroDiffusion *phdif, MeshBlock *pmb,
-    const AthenaArray<Real> &w, const AthenaArray<Real> &bc,
-    int is, int ie, int js, int je, int ks, int ke) {
-  
-  for (int k=ks; k<=ke; ++k) { // include ghost zone
-    for (int j=js; j<=je; ++j) { // prim, cons
-#pragma omp simd
-      for (int i=is; i<=ie; ++i) {
-        Real Tem = pmb->phydro->Tem(k, j, i);
-
-        const Real &gas_rho = w(IDN, k, j, i);
-        Real fv = pmb->pdustfluids->df_w(4*vapor_id, k, j, i) / gas_rho;
-        if(std::isnan(fv) or (fv < 0.0)){
-          std::cout << "Conductivity, fv = " << fv << std::endl;
-          std::cout << "gas_rho = " << gas_rho << std::endl;
-        }
-        Real kappa_R = Get_kappa(0.0, fv);
-        Real UNIT_SB = pmb->pmy_mesh->punit->code_energydensity_cgs * pmb->pmy_mesh->punit->code_velocity_cgs; // flx/(K^4)
-
-        Real &kappa_heat = phdif->kappa(HydroDiffusion::DiffProcess::aniso, k, j, i);
-        Real f_decay = 1.0;
-        // kappa_heat = 1.0/(3.0*kappa_R*gas_rho)* 16.0* (Constants::sigma_cgs/UNIT_SB) *SQR(Tem)*Tem*f_decay;
-        kappa_heat = 0.0;
-      }
-    }
-  }
-  return;
-}
+// void MyConductivity(HydroDiffusion *phdif, MeshBlock *pmb,
+//     const AthenaArray<Real> &w, const AthenaArray<Real> &bc,
+//     int is, int ie, int js, int je, int ks, int ke) {
+//
+//   for (int k=ks; k<=ke; ++k) { // include ghost zone
+//     for (int j=js; j<=je; ++j) { // prim, cons
+// #pragma omp simd
+//       for (int i=is; i<=ie; ++i) {
+//         Real Tem = pmb->phydro->Tem(k, j, i);
+//
+//         const Real &gas_rho = w(IDN, k, j, i);
+//         Real fv = pmb->pdustfluids->df_w(4*vapor_id, k, j, i) / gas_rho;
+//         if(std::isnan(fv) or (fv < 0.0)){
+//           std::cout << "Conductivity, fv = " << fv << std::endl;
+//           std::cout << "gas_rho = " << gas_rho << std::endl;
+//         }
+//         Units *punit = pmb->pmy_mesh->punit;
+//         Real kappa_R = Get_kappa(0.0, fv);
+//         Real UNIT_SB = punit->code_energydensity_cgs * punit->code_velocity_cgs; // flx/(K^4)
+//
+//         Real &kappa_heat = phdif->kappa(HydroDiffusion::DiffProcess::aniso, k, j, i);
+//         Real f_decay = 1.0;
+//         kappa_heat = 1.0/(3.0*kappa_R*gas_rho)* 16.0* (Constants::sigma_cgs/UNIT_SB) *SQR(Tem)*Tem*f_decay;
+//         kappa_heat = 0.0;
+//       }
+//     }
+//   }
+//   return;
+// }
 
 
 void GetCylCoord(Coordinates *pco,Real &rad,Real &phi,Real &z,int i,int j,int k) {
@@ -1678,10 +1484,8 @@ Real DenProfileCyl_gas_fv_T(const Real rad, const Real phi, const Real z, Real f
   Real cs2 = Tem/(KELVIN*mu);
   Real H_gas = std::sqrt(cs2)/std::sqrt(gm0/(rad*rad*rad));
   Real sigma_slope = pvalue + 1.5 + qvalue/2.0;
-  Real denmid = 1.0 * std::pow(rad/r0,sigma_slope) / H_gas;
-  Real dentem = denmid*std::exp(gm0/cs2*(1./std::sqrt(SQR(rad)+SQR(z))-1./rad));
-  den         = dentem;
-  return std::max(den, dfloor+dffloor);
+  Real denmid = 1.0*std::pow(rad/r0, sigma_slope)/H_gas/std::sqrt(2.0*PI);
+  return std::max(denmid, dfloor+dffloor);
 }
 
 
@@ -1835,7 +1639,7 @@ Real DenProfileCyl_dust(const Real rad, const Real phi, const Real z, const Real
   Real denmid = den_ratio*rho0*std::pow(rad/r0, pvalue);
   Real dentem = denmid*std::exp(gm0/(SQR(H_ratio)*cs2)*(1./std::sqrt(SQR(rad)+SQR(z))-1./rad));
   den         = dentem;
-  return std::max(den, dffloor);
+  return std::max(denmid, dffloor);
 }
 
 Real VelProfileCyl_dust(const Real rad, const Real phi, const Real z) {
@@ -1843,6 +1647,11 @@ Real VelProfileCyl_dust(const Real rad, const Real phi, const Real z) {
   Real vel = std::sqrt(gm0/dis) - rad*Omega0;
   // Real vel = std::sqrt(gm0/dis) - std::sqrt(gm0/rad);
   return vel;
+}
+
+template<typename T>
+void print(const T& value, const char* name) {
+    std::cout << name << " = " << value << std::endl;
 }
 
 Real UserOrbitalVelocity(OrbitalAdvection * porb, Real x1, Real x2, Real x3){
@@ -1945,18 +1754,23 @@ void DiskInnerX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
         
         // get midplane temperture
         int tk = 0; int ti = il-i;
-        int tj = static_cast<int>(pmb->loc.lx2)*pmb->block_size.nx2+(j-pmb->js)+ NGHOST;
-        int tj_mid = pmb->pmy_mesh->mesh_size.nx2 + NGHOST -1;
+        int tj = static_cast<int>(pmb->loc.lx2)*pmb->block_size.nx2+(j-pmb->js);
+        int tj_mid = pmb->pmy_mesh->mesh_size.nx2 -1;
         Real Tem_mid = pmb->pmy_mesh->ruser_mesh_data[4](tk,tj_mid,ti);
 
         // keep H/He surface density uneffected at inner boundary
-        Real gas_rho_xy = pmb->pmy_mesh->ruser_mesh_data[7](tk,tj,ti);
+        // Real gas_rho_xy = pmb->pmy_mesh->ruser_mesh_data[7](tk,tj,ti);
+        Real gas_sigma_xy = prim(IDN, k, j, il);
         if(time < 0.195){
-          gas_rho_xy = DenProfileCyl_gas_fv_T(rad_ghost,phi_ghost,z_ghost,fv,Tem_mid);
+          Real mu = mu_xy; // simple model, scale height indep. of mu
+          Real cs2 = Tem_mid/(mu*KELVIN);
+          Real omega = std::sqrt(gm0/(SQR(rad_ghost)*rad_ghost));
+          Real h_gas = std::sqrt(cs2)/omega; 
+          gas_sigma_xy = DenProfileCyl_gas_fv_T(rad_ghost,phi_ghost,z_ghost,fv,Tem_mid)*h_gas*std::sqrt(2.0*PI);
         }
 
         // simple and best practice:
-        gas_rho_ghost = gas_rho_xy/(1.0-fv);
+        gas_rho_ghost = gas_sigma_xy/(1.0-fv);
         gas_vel1_ghost = gas_vel1_active;
         gas_vel2_ghost = gas_vel2_active;
         gas_vel3_ghost = gas_vel3_active*x1_active / (x1_ghost);
@@ -2019,6 +1833,7 @@ void DiskOuterX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
                 int il, int iu, int jl, int ju, int kl, int ku, int ngh) {
   Real rad_ghost(0.0),  phi_ghost(0.0),  z_ghost(0.0);
   Real rad_active(0.0), phi_active(0.0), z_active(0.0);
+  Real rad(0.0), phi(0.0), z(0.0); // cylindrical coordinate
   OrbitalVelocityFunc &vK = pmb->porb->OrbitalVelocity;
   for (int k=kl; k<=ku; ++k) {
     for (int j=jl; j<=ju; ++j) {
@@ -2048,9 +1863,10 @@ void DiskOuterX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
         Real vel_K     = vK(pmb->porb, pco->x1v(iu+i), pco->x2v(j), pco->x3v(k));
 
         int tk = 0; int ti = pmb->pmy_mesh->mesh_size.nx1 + NGHOST + i-1; 
-        int tj = static_cast<int>(pmb->loc.lx2)*pmb->block_size.nx2+(j-pmb->js)+ NGHOST;
-        int tj_mid = pmb->pmy_mesh->mesh_size.nx2 + NGHOST -1;
-        Real Tem_mid = pmb->pmy_mesh->ruser_mesh_data[4](tk,tj_mid,ti);
+        int tj = static_cast<int>(pmb->loc.lx2)*pmb->block_size.nx2+(j-pmb->js);
+        int tj_mid = pmb->pmy_mesh->mesh_size.nx2 -1;
+        GetCylCoord(pmb->pcoord, rad, phi, z, i, j, k); // convert to cylindrical coordinates
+        Real Tem_mid = TemProfile(rad, phi, z);
         
         Real omega_dyn = std::sqrt(gm0/std::pow(rad_ghost,3.0));
         Real &Tem_ghost = pmb->phydro->Tem(k, j, iu+i);
@@ -2063,19 +1879,15 @@ void DiskOuterX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
         
         // best practice:
         gas_rho_ghost = std::exp(2.0*std::log(prim(IDN, k, j, iu+i-1)) - std::log(prim(IDN, k, j, iu+i-2)));
-        gas_vel1_ghost = vr0* std::sin(x2);
-        gas_vel2_ghost = 0.0;
-        gas_vel3_ghost = vel_gas_phi;
+        gas_vel1_ghost = vr0;
+        gas_vel2_ghost = vel_gas_phi;
+        gas_vel3_ghost = 0.0;
         // other bc.
         // gas_vel2_ghost = vr0* std::cos(x2);
         // gas_vel1_ghost = gas_vel1_active;
         // gas_vel2_ghost = gas_vel2_active;
         // gas_rho_ghost = gas_rho_active*SQR(x1_active)/ SQR(x1_ghost);
         // gas_rho_ghost = pmb->pmy_mesh->ruser_mesh_data[7](tk,tj,ti);
-
-        if(time < 0.195){
-          gas_rho_ghost = DenProfileCyl_gas_fv_T(rad_ghost,phi_ghost,z_ghost,0.0,Tem_mid);
-        }
 
         if(std::isnan(gas_vel1_ghost)){
           std::cout <<"gas_vel1_ghost = nan" << std::endl;

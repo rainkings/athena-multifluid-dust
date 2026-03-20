@@ -3,8 +3,8 @@
 
 # Files for conditional compilation
 
-PROBLEM_FILE = disk_snowline_2D_RT_erg_2_twopop.cpp
-COORDINATES_FILE = spherical_polar.cpp
+PROBLEM_FILE = disk_snowline_1d_2p.cpp
+COORDINATES_FILE = cylindrical.cpp
 EOS_FILE = general/eos_phase_change.cpp
 GENERAL_EOS_FILE = general_hydro.cpp
 RSOLVER_FILE = hllc.cpp
@@ -19,7 +19,7 @@ CHEMRADIATION_FILE = const.cpp
 
 CXX := g++
 CPPFLAGS :=  -I/home/izx/bin/hdf5/include
-CXXFLAGS := -O3 -std=c++11 -fopenmp -g -O0
+CXXFLAGS := -O3 -std=c++11 -g -O0
 LDFLAGS :=  -L/home/izx/bin/hdf5/lib
 LDLIBS :=  -lhdf5
 GCOV_CMD := gcov
