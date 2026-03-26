@@ -720,6 +720,12 @@ std::size_t MeshBlock::GetBlockSizeInBytes() {
   if (N_Z > 0) { // PhaseChange arrays for restart (Yu, 2025-11-18)
     size += pphase_change->rho_Np_array.GetSizeInBytes();
   }
+  //[26.03.24]Zhixuan: add the size of m_p_array and Tem
+  // if (N_P > 0) {
+  //   size += pphase_change->m_p_array.GetSizeInBytes();
+  // }
+  // size += phydro->Tem.GetSizeInBytes();
+  //
   if (NSCALARS > 0) {
     size += pscalars->s.GetSizeInBytes();
     if (CHEMISTRY_ENABLED) {

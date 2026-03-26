@@ -122,6 +122,8 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
           for (int n=0; n<N_P*N_Z; n++) { // exclude vapor
             int rho_id = 4*n;
             x1flux(rho_id,k,j,ie+1) = inflx_dust_x1(n,k,j,0); // inflx of dustfluids
+            // x1flux(rho_id+1,k,j,ie+1) = inflx_dust_x1(n,k,j,0)*prim_df(rho_id+1,k,j,ie+1);
+            x1flux(rho_id+2,k,j,ie+1) = inflx_dust_x1(n,k,j,0)*prim_df(rho_id+2,k,j,ie+1);
             // if (inflx_dust_x1(n,k,j,0) >= 0.0) {
             //   std::cout << "Warning: Inflow flux of dust fluid " << n << " is non-positive at outer x1 boundary. Flux correction may not be applied." << std::endl;
             //   std::cout << "influx_dust_x1(" << n << ",k=" << k << ",j=" << j << ") = " << inflx_dust_x1(n,k,j,0) << std::endl;

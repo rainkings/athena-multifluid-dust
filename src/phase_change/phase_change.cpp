@@ -56,6 +56,8 @@ PhaseChange::PhaseChange(MeshBlock *pmb, ParameterInput *pin):
   // (Yu, 2025-11-18) Store rho_Np_array
   rho_Np_array.NewAthenaArray(N_P, pmb->ncells3, pmb->ncells2, pmb->ncells1);
   m_p0_array.NewAthenaArray(N_P);
+
+  m_p_array.NewAthenaArray(N_P, pmb->ncells3, pmb->ncells2, pmb->ncells1);
   
   // Register arrays for restart file I/O (Yu, 2025-11-18)
   pmb->RegisterMeshBlockData(rho_Np_array);
@@ -65,13 +67,28 @@ PhaseChange::PhaseChange(MeshBlock *pmb, ParameterInput *pin):
   
   min_tol_ = pin->GetOrAddReal("problem", "min_tol", 1.e-7);
   f_ICE_inter0_ = pin->GetOrAddReal("problem", "f_ICE_inter0", 0.5);
+
+  Tem0 = pin->GetOrAddReal("problem", "Tem0", 150.0); // [K]
+  r0  = pin->GetOrAddReal("problem", "r0", 3.0);
+  Tslope = pin->GetOrAddReal("problem", "Tslope", -0.5);
   
   // (Yu, 2025-11-18) Convert input parameters from CGS to code units
   for (int p = 0; p < N_P; ++p) {
     //[25.11.25]lzx: here we should multiply by N_Z to get the correct dust_id 
     Real m_p0_cgs = pin->GetReal("dust", "m_p0_" + std::to_string(p*N_Z+1)); // [g]
     m_p0_array(p) = m_p0_cgs / punit->code_mass_cgs; // Convert to code units
+
+    for (int k = 0; k < pmb->ncells3; ++k) {
+      for (int j = 0; j < pmb->ncells2; ++j) {
+        for (int i = 0; i < pmb->ncells1; ++i) {
+          m_p_array(p, k, j, i) = m_p0_array(p); // Initialize m_p to m_p0
+        }
+      }
+    }
+
   }
+
+  
 
   // the min mass in the dust size distribution 
   mmin = pin->GetOrAddReal("dust", "mmin", 1.e-12); // [g]   
@@ -809,7 +826,7 @@ Real PhaseChange::Get_stopping_time(Units *punit, AthenaArray<Real> rho_d, Real 
 // }
 //
 
-void PhaseChange::TriPodSource(MeshBlock *pmb, const Real time, const Real dt, const Real gm0, const Real alpha_vis,
+void PhaseChange::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt, const Real gm0, const Real alpha_vis,
 const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
     const AthenaArray<Real> &prim_s, const AthenaArray<Real> &bcc,
     AthenaArray<Real> &cons, AthenaArray<Real> &cons_df, AthenaArray<Real> &cons_s, AthenaArray<Real> &v_frag) {
@@ -818,45 +835,58 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
 #pragma omp simd
       for (int i=pmb->is; i<=pmb->ie; ++i) {
         //// calculate the maximum mass restricted by the fragmentation velocity
-        Real rho_sil_small =cons_df(4*0, k, j, i);
-        Real rho_sil_big =cons_df(4*1, k, j, i);
+          Real rho_sil_small =cons_df(4*0, k, j, i);
+          Real rho_sil_big =cons_df(4*1, k, j, i);
 
-        if (rho_sil_small <= 10*dffloor_ || rho_sil_big <= 10*dffloor_) {
-          continue; // skip if either pebble size has insufficient material
-        }
-          Real v1_sil_small = prim_df(4*0+1, k, j, i);
-          Real v2_sil_small = prim_df(4*0+2, k, j, i);
-          Real v3_sil_small = prim_df(4*0+3, k, j, i);
+          if (rho_sil_small <= dffloor_ || rho_sil_big <= dffloor_) {
+            continue; // skip if either pebble size has insufficient material
+          }
 
-          Real v1_sil_big = prim_df(4*1+1, k, j, i);
-          Real v2_sil_big = prim_df(4*1+2, k, j, i);
-          Real v3_sil_big = prim_df(4*1+3, k, j, i);
+          Real v1_sil_small = cons_df(4*0+1, k, j, i)/rho_sil_small; 
+          Real v2_sil_small = cons_df(4*0+2, k, j, i)/rho_sil_small;
+          Real v3_sil_small = cons_df(4*0+3, k, j, i)/rho_sil_small;
+
+          Real v1_sil_big = cons_df(4*1+1, k, j, i)/rho_sil_big;
+          Real v2_sil_big = cons_df(4*1+2, k, j, i)/rho_sil_big;
+          Real v3_sil_big = cons_df(4*1+3, k, j, i)/rho_sil_big;
+
+          // std::cout << "Cell (" << k << "," << j << "," << i << "): " << std::endl;
+          // std::cout << "rho_sil_small = " << rho_sil_small << ", v_sil_small = (" << v1_sil_small << "," << v2_sil_small << "," << v3_sil_small << ")" << std::endl;
+          // std::cout << "cons_rho_sil_small = " << cons_df(4*0, k, j, i) << std::endl;
+          // std::cout << "cons_v1_sil_small = " << cons_df(4*0+1, k, j, i) << std::endl;
+          // std::cout << "cons_v2_sil_small = " << cons_df(4*0+2, k, j, i) << std::endl;
 
           Real rad = pmb->pcoord->x1v(i); 
-          Real Tem = pmb->phydro->Tem(k,j,i); 
+          Real Tem = Tem_gas(rad); // [code_temperature]
 
-          Real rho_g = cons(IDN, k, j, i);
-          Real rho_v = cons_df(4*2+1, k, j, i);
-          Real fv = rho_v/rho_g;
-
-          Real v_frag_tot =v_frag(1);
+          Real sigma_g = cons(IDN, k, j, i);
+          Real sigma_v = cons_df(4*2, k, j, i);
 
           Real OmegaK = std::sqrt(gm0/std::pow(pmb->pcoord->x1v(i), 3));
 
+          Real fv = sigma_v/sigma_g;
           Real cs2 = Tem/KELVIN*Get_mu(fv);
+
+          Real H_gas = std::sqrt(cs2)/OmegaK;
+          
+          Real rho_g = sigma_g/(std::sqrt(2*PI)*H_gas);
+
+          Real v_frag_tot =v_frag(1);
+
           Real vth = std::sqrt(8.0/PI)*std::sqrt(cs2); // [code_velocity] 
 
-          Real s_max =SQR(v_frag_tot)/cs2 * rho_g*vth/9/alpha_vis/OmegaK/1e5; // too large...
           Real rho_inte_relax = rho_sil_inter_;
+          //too small, for the moment artificially enlarge it
+          Real s_max =SQR(v_frag_tot)/cs2 * rho_g*vth/3/alpha_vis/OmegaK/rho_inte_relax*5.e2;
+
           Real m_max = FOUR_3RD*PI*SQR(s_max)*s_max*rho_inte_relax; // [code_mass]
           //store the mmax 
           mmax_array(k,j,i) = m_max;
 
         // print the current m_p0_array
         
-        AthenaArray<Real> rho_comps, m_p_array, s_p_array;
+        AthenaArray<Real> rho_comps, s_p_array;
         rho_comps.NewAthenaArray(N_Z); // +1 for vapor
-        m_p_array.NewAthenaArray(N_P);
         s_p_array.NewAthenaArray(N_P);
         for (int p = 0; p < N_P; ++p) {
           //
@@ -868,14 +898,13 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
           // The number density is already updated during the phase_change process, so we can directly use them here.
           Real &rho_Np_p = rho_Np_array(p, k, j, i);
           // Derive m_p and s_p from rho_Np and current densities (Yu, 2025-11-18)
-          m_p_array(p) = Get_m_p_from_rho_Np(rho_comps, rho_Np_p); // [code_mass]
-          s_p_array(p) = Get_s_p_from_m_p(m_p_array(p), rho_comps); // [code_length]
-          
+          m_p_array(p,k,j,i) = Get_m_p_from_rho_Np(rho_comps, rho_Np_p); // [code_mass]
+          s_p_array(p) = std::pow(m_p_array(p,k,j,i)/(FOUR_3RD*PI*rho_inte_relax), ONE_3RD); // [code_length]
         }
         // std::cout << "m_p_array(0) = " << m_p_array(0) << std::endl;
         //calculate the q_before 
-        Real q_before = std::log((rho_sil_big)/(rho_sil_small))/std::log(m_p_array(1)/m_p_array(0)); // the effective powerlaw index of the current state
-        if (std::abs(q_before - 1.0/6.0)/1.0*6.0 > 1.e-2) {
+        Real q_before = std::log((rho_sil_big)/(rho_sil_small))/std::log(m_p_array(1,k,j,i)/m_p_array(0,k,j,i)); // the effective powerlaw index of the current state
+        if (std::abs(q_before - 1.0/6.0)/1.0*6.0 > 1.e-6) {
 
           //get the 1st moments for populations at the current state. 
           AthenaArray<Real> M1_array;
@@ -915,10 +944,13 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
 
           //divide the relaxed state velues according to composition 
           // relaxation timescale: the collisional timescale. 
-          Real St1 = pmb->pdustfluids->stopping_time_array(1, k, j, i);
+          Real t_stop = pmb->pdustfluids->stopping_time_array(1, k, j, i);
+          Real St1 = t_stop*OmegaK;
           Real delV = std::sqrt(3*alpha_vis*St1*cs2); // relative velocity between the two populations, using the turbulent relative velocity for simplicity.
-          Real t_relax = 1.0/(4*rho_Np_array(1, k,j,i) *PI*SQR(s_p_array(1)) * delV );
-          //// TBD: should use a bulk number density
+
+          //// Here we use volumn number density rather than the column number density 
+          Real rho_Np_vol = rho_Np_array(1,k,j,i)/std::sqrt(2*PI)/H_gas; // the bulk number density of pebbles, using the number density of the big population as a proxy.
+          Real t_relax = 1.0/(4*rho_Np_vol *PI*SQR(s_p_array(1)) * delV );
 
           //relax the current state to the relaxed state: 
           Real relax_rate = dt/t_relax;
@@ -948,6 +980,17 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
           cons_df(4*1+2, k, j, i) = cons_df(4*1, k, j, i) * v2_sil_big;
           cons_df(4*1+3, k, j, i) = cons_df(4*1, k, j, i) * v3_sil_big;
 
+          // std::cout << "after Cell (" << k << "," << j << "," << i << "): " << std::endl;
+          // std::cout << "rho_sil_small = " << rho_sil_small << ", v_sil_small = (" << v1_sil_small << "," << v2_sil_small << "," << v3_sil_small << ")" << std::endl;
+          // std::cout << "cons_rho_sil_small = " << cons_df(4*0, k, j, i) << std::endl;
+          // std::cout << "cons_v1_sil_small = " << cons_df(4*0+1, k, j, i) << std::endl;
+          // std::cout << "cons_v2_sil_small = " << cons_df(4*0+2, k, j, i) << std::endl;
+          // if (time > 0.0){
+          //   std::cout << "v1_sil_small=" << v1_sil_small << ", v1_sil_big=" << v1_sil_big << std::endl;
+          // if (std::isnan(v1_sil_small) || std::isnan(v1_sil_big)){
+          //   std::cout << "v1_sil_small=" << v1_sil_small << ", v1_sil_big=" << v1_sil_big << std::endl;
+          // }
+          // }
 
 
           //compare the powerlaw index before and after the relaxation
@@ -957,7 +1000,18 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
             std::cout << "overshoot" << std::endl;
           }
 
+          //check mass conservation 
+          Real mass_before = rho_sil_small + rho_sil_big;
+          Real mass_after = rho_sil_small_new + rho_sil_big_new;
+          if (std::abs(mass_after - mass_before)/mass_before > 1.e-10){
+            std::cout << "### WARNING: Mass not conserved during relaxation at cell (" << k << "," << j << "," << i << ")" << std::endl;
+            std::cout << "Mass before relaxation: " << mass_before << std::endl;
+            std::cout << "Mass after relaxation: " << mass_after << std::endl;
+          }
+
         } else{
+          //still update the rho_Np_array.
+
           // std::cout << "No relaxation needed at cell (" << k << "," << j << "," << i << ")" << std::endl;
         }
           // std::cout << "Effective powerlaw index before relaxation: " << q_before << std::endl;
@@ -982,7 +1036,11 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
      }
   }
 }
-// void PhaseChange::TriPodSource(MeshBlock *pmb, const Real time, const Real dt, const Real gm0, const Real alpha_vis,
+
+Real PhaseChange::Tem_gas(const Real rad){
+    return Tem0*std::pow(rad/r0, Tslope);
+}
+// void PhaseChange::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt, const Real gm0, const Real alpha_vis,
 // const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
 //     const AthenaArray<Real> &prim_s, const AthenaArray<Real> &bcc,
 //     AthenaArray<Real> &cons, AthenaArray<Real> &cons_df, AthenaArray<Real> &cons_s, AthenaArray<Real> &v_frag) {

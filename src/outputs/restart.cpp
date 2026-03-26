@@ -218,6 +218,15 @@ void RestartOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin, bool force_wr
       pdata += pmb->pphase_change->rho_Np_array.GetSizeInBytes();
     }
 
+    // [26.03.24]Zhixuan: add the temperature array and m_p_array
+    // if (N_P > 0) {
+    //   std::memcpy(pdata, pmb->pphase_change->m_p_array.data(), 
+    //               pmb->pphase_change->m_p_array.GetSizeInBytes());
+    //   pdata += pmb->pphase_change->m_p_array.GetSizeInBytes();
+    // }
+    // std::memcpy(pdata, pmb->phydro->Tem.data(), pmb->phydro->Tem.GetSizeInBytes());
+    // pdata += pmb->phydro->Tem.GetSizeInBytes();
+
     // (conserved variable) Passive scalars:
     if (NSCALARS > 0) {
       AthenaArray<Real> &s = pmb->pscalars->s;
