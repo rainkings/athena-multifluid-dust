@@ -143,7 +143,7 @@ void DustFluids::TracerUpwindFlux(const int k, const int j, const int il,
   AthenaArray<Real> &gas_mass_flx,  // 3D
   AthenaArray<Real> &flx_out) { // 4D
 
-for (int n = 0; n < NDUSTFLUIDS; ++n) {
+for (int n = vapor_id; n < NDUSTFLUIDS; ++n) {
   int rho_id = 4 * n;
   if (n == vapor_id) {
     for (int i = il; i <= iu; i++) {
@@ -153,7 +153,25 @@ for (int n = 0; n < NDUSTFLUIDS; ++n) {
       else
         flx_out(rho_id, k, j, i) = fluid_flx * r_r(n, i);
     }
-  }
+  } else {
+      //[26.03.30]Zhixuan: copy the flux of refractory component to number density
+      //            Note that the r_l and r_r must in the units of 1/m_p, and here the m_p should be the silicate mass 
+      for (int i = il; i <= iu; i++) {
+        int p = n - 1 - N_P*N_Z;
+        int sil_id = (p+1)*N_Z - 1; // index of the last pebble in the same size bin as pebble p
+        Real fluid_flx = flx_out(sil_id*4, k, j, i); // use the flux of the last pebble in the same size bin as pebble p to determine the upwind direction for all pebbles in that size bin
+        // Real flx = flx_out(rho_id, k, j, i);
+
+        if (fluid_flx >= 0.0){
+          flx_out(rho_id, k, j, i) = fluid_flx * r_l(n, i);
+        } else{
+          flx_out(rho_id, k, j, i) = fluid_flx * r_r(n, i);
+        }
+        // std::cout << "Applying tracer upwind flux for vapor at (k,j,i)=(" << k << "," << j << "," << i << "): fluid_flx = " << fluid_flx << ", r_l = " << r_l(n, i) << ", r_r = " << r_r(n, i) << ", flx_out = " << flx_out(rho_id, k, j, i) << std::endl; // debug
+
+      }
+    }
+
 }
 
 return;

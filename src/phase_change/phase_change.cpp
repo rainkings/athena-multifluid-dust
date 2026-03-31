@@ -43,8 +43,8 @@ PhaseChange::PhaseChange(MeshBlock *pmb, ParameterInput *pin):
     ATHENA_ERROR(msg);
   }
   
-  // Verify consistency: NDUSTFLUIDS should equal N_P * N_Z + NVapor
-  if(NDUSTFLUIDS != N_P * N_Z + NVapor) {
+  // Verify consistency: NDUSTFLUIDS should equal N_P * (N_Z + 1) + NVapor [26.03.26]Zhixuan: add number density
+  if(NDUSTFLUIDS != N_P * (N_Z + 1) + NVapor) {
     std::stringstream msg;
     msg << "### FATAL ERROR in PhaseChange::PhaseChange" << std::endl
         << "NDUSTFLUIDS (" << NDUSTFLUIDS << ") != N_P * N_Z + NVapor ("
@@ -964,6 +964,11 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
           Real m_small_new = (rho_sil_small_new)/n_small_new; 
           Real m_big_new = (rho_sil_big_new)/n_big_new;
 
+          // if (i ==2){
+          // std::cout << rho_Np_array(1, k,j,i) << " -> " << n_big_new << std::endl;
+          // std::cout << m_p_array(1,k,j,i) << " -> " << m_big_new << std::endl;
+          // std::cout << rho_sil_big << " -> " << rho_sil_big_new << std::endl;
+          // }
 
           //assign the new values to the simulation: 
           cons_df(4*0, k, j, i) = std::fmax(rho_sil_small_new, dffloor_); // avoid negative density after relaxation 

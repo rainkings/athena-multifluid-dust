@@ -48,7 +48,8 @@ constexpr Real sigma_mol_cgs = 2.e-15;
 
 // number of vapor species
 #define        NVapor    1  // (Yu) only one vapor is allowed now.
-#define        vapor_id  (NDUSTFLUIDS-1)  // last dust fluid as vapor. must have this parenthesis when defining!
+// [26.03.26]Zhixuan:
+#define        vapor_id  (NDUSTFLUIDS-1-N_P)  // last dust fluid as vapor. must have this parenthesis when defining!
 #define        FLX_COR   1
 
 

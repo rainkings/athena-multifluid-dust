@@ -166,7 +166,7 @@ DustFluids::DustFluids(MeshBlock *pmb, ParameterInput *pin)  :
   r_.NewAthenaArray(NDUSTFLUIDS, nc3, nc2, nc1);
 
   if (FLX_COR) {
-    inflx_dust_x1.NewAthenaArray(N_P*N_Z, pmb->ncells3, pmb->ncells2, pmb->ncells1);
+    inflx_dust_x1.NewAthenaArray(NDUSTFLUIDS, pmb->ncells3, pmb->ncells2, pmb->ncells1);
   }
 
   if (pm->f2) {

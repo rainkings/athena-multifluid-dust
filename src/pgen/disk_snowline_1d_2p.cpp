@@ -232,7 +232,7 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
                 phydro->Tem(k, j, i) = Tem;
 
                 //then assige the preperties to dust 
-                for (int n=0; n<NDUSTFLUIDS; ++n){
+                for (int n=0; n<N_P*N_Z + 1; ++n){
                     int dust_id = n;
                     int rho_id  = 4*dust_id;
                     int v1_id   = rho_id + 1;
@@ -240,21 +240,37 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
                     int v3_id   = rho_id + 3;
 
                     // should not multiply the H_ratio
-                    Real dust_sigma = DenProfileCyl_dust(rad,phi,z, initial_D2G[n], H_ratio[n])*std::sqrt(2.0*PI)*h_gas; // surface density of dust
+                    Real dust_dens = DenProfileCyl_dust(rad,phi,z, initial_D2G[n], H_ratio[n]);
+                    Real dust_sigma = dust_dens*std::sqrt(2.0*PI)*h_gas; // surface density of dust
                     pdustfluids->df_u(rho_id, k, j, i) = dust_sigma; // dust density
 
                     Real vel_dust_phi = VelProfileCyl_dust(rad, phi, z);
                     if (porb->orbital_advection_defined)
                       vel_dust_phi -= vel_K;
 
-                    if (dust_id ==vapor_id){
+                    if (dust_id == vapor_id){
                         pdustfluids->df_u(v1_id, k, j, i) = dust_sigma*v_acc_gas; // vapor radial momentum
                         pdustfluids->df_u(v2_id, k, j, i) = dust_sigma*vel_gas_phi; // vapor azimuthal momentum
                         pdustfluids->df_u(v3_id, k, j, i) = 0.0; // vapor vertical momentum
-                    } else{
+                    } else{  // else we have both dustfluids and number density fluids [26.03.26]
                         pdustfluids->df_u(v1_id, k, j, i) = 0.0; // dust radial momentum
                         pdustfluids->df_u(v2_id, k, j, i) = dust_sigma*vel_dust_phi; // dust azimuthal momentum
                         pdustfluids->df_u(v3_id, k, j, i) = 0.0; // dust vertical momentum
+
+                        int dustn_id = N_P*N_Z + 1 + dust_id;
+                        int n_id = 4*dustn_id;
+                        int nv1_id = n_id + 1;
+                        int nv2_id = n_id + 2;
+                        int nv3_id = n_id + 3;
+
+                        if (pphase_change != nullptr) {
+                            Real rho_Np_column = dust_sigma/(1 - 0.0)/(pphase_change->m_p0_array(dust_id/N_Z)); // [code_number_density]
+                            pdustfluids->df_u(n_id, k, j, i) = rho_Np_column; // number density of dust
+                            // Real check = rho_Np_column/std::pow(pmy_mesh->punit->code_length_cgs, 2);
+                            pdustfluids->df_u(nv1_id, k, j, i) = 0.0; // number density flux in radial direction
+                            pdustfluids->df_u(nv2_id, k, j, i) = rho_Np_column*vel_dust_phi; // number density flux in azimuthal direction
+                            pdustfluids->df_u(nv3_id, k, j, i) = 0.0; // number density flux in vertical direction
+                        }
                     }
                 // std::cout << "sigma_dust = " << pdustfluids->df_u(rho_id, k, j, i) << " at (k,j,i)=("<<k<<","<<j<<","<<i<<")!" << std::endl;
                 // std::cout << "mom_dust = " << pdustfluids->df_u(v1_id, k, j, i) << " at (k,j,i)=("<<k<<","<<j<<","<<i<<")!" << std::endl;
@@ -278,20 +294,21 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
                 // std::cout << "vapor_vel1 = " << pdustfluids->df_w(4*vapor_id+1,k,j,i) << std::endl;
                 // std::cout << "=========================================" << std::endl;
 
-                if (pphase_change != nullptr && N_Z>0) {
-                    for (int p = 0; p < N_P; ++p) {
-                        int refrac_id = N_Z * (p+1) - 1;
-                        int rho_id = 4*refrac_id;
-                        Real sigma_sil_p = pdustfluids->df_u(rho_id, k, j, i);
-                        Real &rho_Np = pphase_change->rho_Np_array(p, k, j, i);
-                        //TBD: add f_ice_inter here
-                        rho_Np = sigma_sil_p /(1.0 - 0.0)/(pphase_change->m_p0_array(p)); // [code_number_density]
-                        // if (std::isinf(rho_Np) || std::isnan(rho_Np) || rho_Np == 0.0) {
-                        //   std::cout << "Warning: rho_Np is " << rho_Np << " at (k,j,i)=("<<k<<","<<j<<","<<i<<")!" << std::endl;
-                        //   std::cout << "sigma_sil_p = " << sigma_sil_p << ", m_p0 = " << pphase_change->m_p0_array(p, k, j, i) << std::endl;
-                        // }
-                    }
-                }
+                // [26.03.26]Zhixuan: We don't need to calculate the number density, since now the number density is a fluid
+                // if (pphase_change != nullptr && N_Z>0) {
+                //     for (int p = 0; p < N_P; ++p) {
+                //         int refrac_id = N_Z * (p+1) - 1;
+                //         int rho_id = 4*refrac_id;
+                //         Real sigma_sil_p = pdustfluids->df_u(rho_id, k, j, i);
+                //         Real &rho_Np = pphase_change->rho_Np_array(p, k, j, i);
+                //         //TBD: add f_ice_inter here
+                //         rho_Np = sigma_sil_p /(1.0 - 0.0)/(pphase_change->m_p0_array(p)); // [code_number_density]
+                //         // if (std::isinf(rho_Np) || std::isnan(rho_Np) || rho_Np == 0.0) {
+                //         //   std::cout << "Warning: rho_Np is " << rho_Np << " at (k,j,i)=("<<k<<","<<j<<","<<i<<")!" << std::endl;
+                //         //   std::cout << "sigma_sil_p = " << sigma_sil_p << ", m_p0 = " << pphase_change->m_p0_array(p, k, j, i) << std::endl;
+                //         // }
+                //     }
+                // }
 
                 // get pebble stopping times
 
@@ -319,13 +336,22 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
 
                     // calculate stopping time for the pebble
                     // (Yu, 2025-11-18) Use rho_Np_array instead of m_p_array/s_p_array
-                    Real rho_Np = pphase_change->rho_Np_array(p, k, j, i);
+                    // Real rho_Np_column = pphase_change->rho_Np_array(p, k, j, i);
+                    // [26.03.26]Zhixuan: Now we should get the number density from dustfluids
+                    int n_id = 4*(N_P*N_Z + 1 + p);
+                    Real rho_Np_column = pdustfluids->df_u(n_id, k, j, i); // number density of the pebble
+                    Real rho_Np = rho_Np_column/(std::sqrt(2.0*PI)*h_gas); // convert back to volume density for stopping time calculation
+
                     // (Yu, 2025-11-16) Pass vapor density separately since it's not in per-pebble array
                     Real rho_v = pdustfluids->df_u(4*vapor_id, k, j, i);
                     Real gas_dens = phydro->u(IDN, k, j, i)/std::sqrt(2.0*PI)/h_gas; // convert back to volume density for stopping time calculation
                         
                       // std::cout << "rho_dustfluid_array_pebble(" << z << ") = " << rho_dustfluid_array_pebble(z) << " at (k,j,i)=("<<k<<","<<j<<","<<i<<")!" << std::endl;
                     Real t_stop = pphase_change->Get_stopping_time(pmy_mesh->punit, rho_dustfluid_array_pebble, Tem, gas_dens, rho_v, rho_Np);
+                    //[26.03.30]Zhixuan: we should specify the stopping time for number density 
+                    Real &t_stop_n = pdustfluids->stopping_time_array(n_id/4, k, j, i); 
+                    t_stop_n = t_stop; 
+
                     // ===== upper limit, St can be extremely high for upper layer =====
                     t_stop = (t_stop > 0.5) ? 0.5 : t_stop;
 
@@ -499,6 +525,47 @@ void MeshBlock::UserWorkInLoop(){
           }
         }
 
+        // copy refractory velocity to number density for each population 
+        if (N_P >=2 ) {
+          for (int p = 0; p < N_P; ++p) {
+            int refrac_id = N_Z*(p+1)-1; // last index in each pebble size bin 
+            int ice_id = N_Z*p;          // first index in each pebble size bin 
+
+            int refrac_rho_id  = 4*refrac_id;
+            int refrac_v1_id   = refrac_rho_id + 1;
+            int refrac_v2_id   = refrac_rho_id + 2;
+            int refrac_v3_id   = refrac_rho_id + 3;
+            
+            const Real &d1_vel1 = pdustfluids->df_w(refrac_v1_id,  k, j, i);
+            const Real &d1_vel2 = pdustfluids->df_w(refrac_v2_id,  k, j, i);
+            const Real &d1_vel3 = pdustfluids->df_w(refrac_v3_id,  k, j, i);
+
+            int dustn_id = N_P*N_Z + 1 + p;
+            int n_id = 4*dustn_id;
+            int nv1_id = n_id + 1;
+            int nv2_id = n_id + 2;
+            int nv3_id = n_id + 3;
+
+            Real &n_vel1 = pdustfluids->df_w(nv1_id,  k, j, i);
+            Real &n_vel2 = pdustfluids->df_w(nv2_id,  k, j, i);
+            Real &n_vel3 = pdustfluids->df_w(nv3_id,  k, j, i);
+
+            const Real &n_rho  = pdustfluids->df_u(n_id, k, j, i);
+            Real &n_mom1 = pdustfluids->df_u(nv1_id,  k, j, i);
+            Real &n_mom2 = pdustfluids->df_u(nv2_id,  k, j, i);
+            Real &n_mom3 = pdustfluids->df_u(nv3_id,  k, j, i);
+
+            n_vel1 = d1_vel1;
+            n_vel2 = d1_vel2;
+            n_vel3 = d1_vel3; 
+            n_mom1 = n_rho*d1_vel1;
+            n_mom2 = n_rho*d1_vel2;
+            n_mom3 = n_rho*d1_vel3;
+            
+          }
+
+        }
+
         //apply floor value
         for (int n=0; n<NDUSTFLUIDS; n++) {
           int dust_id = n;
@@ -524,49 +591,61 @@ void MeshBlock::UserWorkInLoop(){
       }
     }
 
-  for (int k=kl; k<=ku; ++k) {
-    for (int j=jl; j<=ju; ++j) {
-      for (int i=il; i<=iu; ++i) {
-    //update the rho_Np_array if phase_change_source and tripodsource are not enabled. 
-    if (pphase_change != nullptr && !PhaseChange_Flag && !Relaxation_Flag) {
+  //[26.03.30]Zhixuan: update the pebble mass array here
+    if (pphase_change != nullptr) {
+      for (int k=kl; k<=ku; ++k) {
+        for (int j=jl; j<=ju; ++j) {
+          for (int i=il; i<=iu; ++i) {
+            AthenaArray<Real> rho_comps, s_p_array;
+            rho_comps.NewAthenaArray(N_Z); // +1 for vapor
+            for (int p = 0; p < N_P; ++p) {
+              //
+              for (int z = 0; z < N_Z; ++z) {
+                Real dust_rho_id = N_Z * p + z;
+                rho_comps(z) = pdustfluids->df_u(4*dust_rho_id, k, j, i);
+              }
 
-        AthenaArray<Real> rho_comps, s_p_array;
-        rho_comps.NewAthenaArray(N_Z); // +1 for vapor
-        s_p_array.NewAthenaArray(N_P); // +1 for vapor
-        for (int p = 0; p < N_P; ++p) {
-          //
-          for (int z = 0; z < N_Z; ++z) {
-            Real dust_rho_id = N_Z * p + z;
-            rho_comps(z) = pdustfluids->df_u(4*dust_rho_id, k, j, i);
+              // update rho_Np for pebble p
+              int dustn_id = 4*(N_P*N_Z + 1 + p);
+              Real &rho_Np_p = pdustfluids->df_u(dustn_id, k, j, i); // number density of the pebble 
+              Real rho_refrac = rho_comps(rho_comps.GetDim1() - 1); // refractory (always the last one)
+
+              // Derive m_p and s_p from rho_Np and current densities (Yu, 2025-11-18)
+              Real &m_p = pphase_change->m_p_array(p, k, j, i);
+              if (N_Z >= 2){
+                  m_p = pphase_change->Get_m_p_from_rho_Np(rho_comps, rho_Np_p); // [code_mass]
+              } else{
+                  m_p = rho_refrac/rho_Np_p; // if only one composition, directly derive mass from density and number density
+              }
+
+            }
+           }
           }
-
-          // update rho_Np for pebble p
-          Real &rho_Np_p = pphase_change->rho_Np_array(p, k, j, i);
-          Real rho_refrac = rho_comps(rho_comps.GetDim1() - 1); // refractory (always the last one)
-          // rho_Np_p = rho_refrac/(1.0 - f_ICE_inter0_)/m_p0_array(p); // [code_number_density]
-          rho_Np_p = rho_refrac/(1.0 - 0.0)/pphase_change->m_p0_array(p); // [code_number_density]
-          
-          // Derive m_p and s_p from rho_Np and current densities (Yu, 2025-11-18)
-          Real m_p = pphase_change->Get_m_p_from_rho_Np(rho_comps, rho_Np_p); // [code_mass]
-          Real s_p = pphase_change->Get_s_p_from_m_p(m_p, rho_comps); // [code_length]
-          s_p_array(p) = s_p;
         }
-    } //end if 
-       }
-   }
     }
 
       Real Mdot_gas = -1.e-8* Constants::solar_mass_cgs/ Constants::yr_cgs; // in cgs
       Mdot_gas /= (pmy_mesh->punit->code_mass_cgs /pmy_mesh->punit->code_time_cgs);
 
     if (pbval->block_bcs[BoundaryFace::outer_x1] == BoundaryFlag::user) {
-        phydro->inflx_x1(0,0,0) = Mdot_gas/(2*PI*pcoord->x1v(ie+1));
+        Real rad = pcoord->x1v(ie+1);
+        Real Tem = Tem_gas(rad); 
+        Real mu_gas = 2.34; // mean molecular weight in proton mass units
+        Real cs = std::sqrt(Tem/mu_gas/KELVIN);
+        Real omega_dyn = std::sqrt(gm0/std::pow(rad, 3));
+        Real h_gas = cs/omega_dyn;
+        phydro->inflx_x1(0,0,0) = Mdot_gas/(2*PI*pcoord->x1v(ie+1)); // convert to surface density flux for 2D
 
         for (int p =0; p<N_P; ++p){
             for (int zi = 0; zi<N_Z; ++zi){
                 int dust_id = N_Z * p + zi;
                 pdustfluids->inflx_dust_x1(dust_id,0,0,0) = phydro->inflx_x1(0,0,0)*p2g_flux[dust_id]*(1.0-std::exp(-0.5*SQR((pmy_mesh->time-dust_start_injection)/injection_Tsoft)));
-              // dust_sigma_ghost = sigma_peb*0.5*(1.0-std::exp(-0.5*SQR((time-dust_start_injection)/injection_Tsoft)));
+
+                // int dustn_id = N_P*N_Z + 1 + p; 
+                // pdustfluids->inflx_dust_x1(dustn_id,0,0,0) = pdustfluids->inflx_dust_x1(dust_id,0,0,0)/pphase_change->m_p_array(p,0,0,ie+1);
+                // std::cout << "dustn_id = " << dustn_id << std::endl;
+                // std::cout << "m_p = " << pphase_change->m_p_array(p,0,0,ie+1) << " at time=("<<pmy_mesh->time<<")!" << std::endl;
+                // dust_sigma_ghost = sigma_peb*0.5*(1.0-std::exp(-0.5*SQR((time-dust_start_injection)/injection_Tsoft)));
             }
         }
             
@@ -600,18 +679,23 @@ void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin){
               Real comp_id = p*N_Z + n;
               rho_comps(n) = pdustfluids->df_w(4*comp_id, k, j, i); // [code_density] 
             }
-            Real rho_Np = pphase_change->rho_Np_array(p, k, j, i); // [code_number_density]
+            // Real rho_Np_column = pphase_change->rho_Np_array(p, k, j, i); // [code_number_density]
+            //[26.03.27]Zhixuan: Now we should get the number density from dustfluids 
+            int dustn_id = 4*(N_P*N_Z + 1 + p);
+            Real rho_Np_column = pdustfluids->df_u(dustn_id, k, j, i); // number density of the pebble
             
             // Real rho_I = pdustfluids->df_w(4*p, k, j, i); // ice for pebble p [code_density]
             // Real rho_sil = pdustfluids->df_w(4*(p*N_Z+1), k, j, i); // refractory for pebble p [code_density]
             Units *punit = pmy_mesh->punit;
             Real m_p, s_p;
             if (N_Z > 1){
-            m_p = pphase_change->Get_m_p_from_rho_Np(rho_comps, rho_Np); // [code_mass]
-            s_p = pphase_change->Get_s_p_from_m_p(m_p, rho_comps); // [code_length]
+                m_p = pphase_change->Get_m_p_from_rho_Np(rho_comps, rho_Np_column); // [code_mass]
+                s_p = pphase_change->Get_s_p_from_m_p(m_p, rho_comps); // [code_length]
             } else{
-            m_p = rho_comps(0)/rho_Np; 
-            s_p = std::pow(3.0*m_p/(4.0*PI*3.0/punit->code_density_cgs), 1.0/3.0);
+                m_p = rho_comps(0)/rho_Np_column; 
+                // m_p = pphase_change->m_p_array(p, k, j, i); 
+                s_p = std::pow(3.0*m_p/(4.0*PI*3.0/punit->code_density_cgs), 1.0/3.0);
+
             }
 
             // really no good idea to output this more elegently now.... [25.11.24]
@@ -743,7 +827,7 @@ Real Get_eta_vk(AthenaArray<Real> rad, Real k, Real j, Real i, const AthenaArray
   for (int n=0; n<5; ++n) {
     prs_sigma(n) = prim(IPR, k, j, i+n-2);
     sigma_gas(n) = prim(IDN, k, j, i+n-2);
-    sigma_vapor(n) = prim_df(4*(NDUSTFLUIDS-1), k, j, i+n-2);
+    sigma_vapor(n) = prim_df(4*vapor_id, k, j, i+n-2);
     fv(n) = sigma_vapor(n)/sigma_gas(n);
 
     Real mu_gas = get_mu(fv(n));
@@ -816,6 +900,8 @@ void MyStoppingTime(MeshBlock *pmb, const Real time, const AthenaArray<Real> &pr
 
           // collect dustfluid of the same pebble (primitive variables)
           // [25.11.26]lzx: let's avoid using same variable name 'z' here
+          Real rho_Np;
+          int n_id = 4*(N_P*N_Z + 1 + p);
           for (int zi = 0; zi < N_Z; ++zi) {
             int dust_id = N_Z * p + zi;
             int rho_id = 4*dust_id;
@@ -828,12 +914,17 @@ void MyStoppingTime(MeshBlock *pmb, const Real time, const AthenaArray<Real> &pr
                 std::cout << "prim_df(rho_id) = " << prim_df(rho_id, k, j, i) << ", h_peb = " << h_peb << std::endl;
                 std::cout << "time = " << pmesh->time << std::endl;
             }
+              // Real rho_Np_column = pphase_change->rho_Np_array(p, k, j, i);
+              Real rho_Np_column = prim_df(n_id, k, j, i);
+              rho_Np = rho_Np_column/std::sqrt(2.0*PI)/h_peb;
           }
 
           // calculate stopping time for the pebble
-          Real rho_Np = pphase_change->rho_Np_array(p, k, j, i);
           Real rho_v = prim_df(4*vapor_id, k, j, i);
           Real t_stop = pphase_change->Get_stopping_time(pmesh->punit, rho_dustfluid_array_pebble, Tem, gas_dens, rho_v, rho_Np);
+        //[26.03.30]Zhixuan: we should specify the stopping time for number density 
+        Real &t_stop_n = pdustfluids->stopping_time_array(n_id/4, k, j, i); 
+        t_stop_n = t_stop; 
 
           // ===== upper limit, St can be extremely high for upper layer =====
           t_stop = (t_stop > 0.5) ? 0.5 : t_stop;
@@ -914,7 +1005,7 @@ void LocalIsothermalEOS(MeshBlock *pmb, const Real time, const Real dt,
         Real &gas_mom3 = cons(IM3, k, j, i);
         Real &gas_erg  = cons(IEN, k, j, i);
 
-        const Real &rho_v = cons_df(4*(NDUSTFLUIDS-1), k, j, i);
+        const Real &rho_v = cons_df(4*vapor_id, k, j, i);
 
         // temperature profile: fixed
         Real Tem = Tem_gas(rad); 
@@ -1140,7 +1231,7 @@ void DiskInnerX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
         // bc that keeps the slope of density the same
         // sigma_interpolate_inner_log(rad_active,rad_ghost,gas_sigma_active,gas_sigma_ghost);
         
-        Real fv = prim_df(4*(NDUSTFLUIDS-1), k, j, il)/gas_sigma_active;
+        Real fv = prim_df(4*vapor_id, k, j, il)/gas_sigma_active;
         // keep H/He uneffected at far boundary
         Real gas_rho_xy = DenProfileCyl_gas(rad_ghost,phi_ghost,z_ghost);
         Real h_gas = Get_H_gas(rad_ghost,0.0);
@@ -1162,7 +1253,7 @@ void DiskInnerX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
         }
 
         if (NDUSTFLUIDS > 0) {
-          for (int n=0; n<NDUSTFLUIDS; ++n) {
+          for (int n=0; n<N_P*N_Z + 1; ++n) {
             int dust_id = n;
             int rho_id  = 4*dust_id;
             int v1_id   = rho_id + 1;
@@ -1186,8 +1277,21 @@ void DiskInnerX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
                 // std::cout << "number density_0 = " << pmb->pphase_change->rho_Np_array(dust_id/N_Z, k, j, 0)  << std::endl;          
                 // std::cout << "number density_1 = " << pmb->pphase_change->rho_Np_array(dust_id/N_Z, k, j, 1)  << std::endl;          
                 // std::cout << "number density_2 = " << pmb->pphase_change->rho_Np_array(dust_id/N_Z, k, j, 2)  << std::endl;          
+              // [26.03.27]Zhixuan: now set the 
+                //[26.03.27]Zhixuan: now set the number density to the number density function in the dustfluids
               //change number density accordingly. 
-                pmb->pphase_change->rho_Np_array(dust_id/N_Z, k,j,il-i) = pmb->pphase_change->rho_Np_array(dust_id/N_Z, k, j, il);
+                // pmb->pphase_change->rho_Np_array(dust_id/N_Z, k,j,il-i) = pmb->pphase_change->rho_Np_array(dust_id/N_Z, k, j, il);
+                int dustn_id = N_P*N_Z + 1 + dust_id; 
+                int n_id = 4*dustn_id;
+                int nv1_id = n_id + 1;
+                int nv2_id = n_id + 2;
+                int nv3_id = n_id + 3;
+
+                prim_df(n_id, k, j, il-i) = prim_df(n_id, k, j, il);
+                prim_df(nv1_id, k, j, il-i) = prim_df(nv1_id, k, j, il);
+                prim_df(nv2_id, k, j, il-i) = prim_df(nv2_id, k, j, il);
+                prim_df(nv3_id, k, j, il-i) = prim_df(nv3_id, k, j, il);
+
             }else{
               Real &vapor_sigma_ghost  = prim_df(rho_id, k, j, il-i);
               Real &vapor_vel1_ghost = prim_df(v1_id,  k, j, il-i);
@@ -1472,7 +1576,7 @@ void DiskOuterX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
           gas_pres_ghost = gas_sigma_ghost*SQR(cs);
 
         if (NDUSTFLUIDS > 0) {
-          for (int n=0; n<NDUSTFLUIDS; ++n) {
+          for (int n=0; n<N_P*N_Z + 1; ++n) {
             int dust_id = n;
             int rho_id  = 4*dust_id;
             int v1_id   = rho_id + 1;
@@ -1483,7 +1587,7 @@ void DiskOuterX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
             Real &dust_vel1_ghost = prim_df(v1_id,  k, j, iu+i);
             Real &dust_vel2_ghost = prim_df(v2_id,  k, j, iu+i);
             Real &dust_vel3_ghost = prim_df(v3_id,  k, j, iu+i);
-            Real &rho_Np_ghost = pmb->pphase_change->rho_Np_array(dust_id/N_Z, k, j, iu+i);
+            // Real &rho_Np_ghost = pmb->pphase_change->rho_Np_array(dust_id/N_Z, k, j, iu+i);
 
             if(dust_id != vapor_id){
                 Real t_stop = pmb->pdustfluids->stopping_time_array(dust_id, k,j,iu-i+1);
@@ -1497,7 +1601,7 @@ void DiskOuterX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
                 // dust_vel1_ghost = v_drift_peb;
                 // // Real H_peb = h_gas*std::sqrt(nu_alpha/(nu_alpha+taus));
                 // Real Mdot_peb = p2g_flux[dust_id]*M_dot_g*Constants::solar_mass_cgs/Constants::yr_cgs;
-                // // Mdot_peb /= (SQR(UNIT_LENGTH)*std::sqrt(2.0*PI)*H_peb*UNIT_LENGTH*UNIT_DENSITY/UNIT_T); // in code unit
+                // Mdot_peb /= (SQR(UNIT_LENGTH)*std::sqrt(2.0*PI)*H_peb*UNIT_LENGTH*UNIT_DENSITY/UNIT_T); // in code unit
                 // Mdot_peb /= (pmb->pmy_mesh->punit->code_mass_cgs/ pmb->pmy_mesh->punit->code_time_cgs); // in code unit 
                 // Real sigma_peb = Mdot_peb/(2.0*PI*rad_ghost*fabs(v_drift_peb));
                 //
@@ -1506,12 +1610,26 @@ void DiskOuterX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
                 if (pmb->porb->orbital_advection_defined)
                     vel_dust_phi -= vel_K;
 
-                dust_sigma_ghost = prim_df(rho_id, k, j, iu)*SQR(rad_ghost/rad_active);
+                dust_sigma_ghost = prim_df(rho_id, k, j, iu)*SQR(rad_active/rad_ghost);
                 dust_vel1_ghost = v_drift_peb;
                 dust_vel2_ghost = vel_dust_phi;
                 // dust_vel1_ghost = prim_df(v1_id,  k, j, iu);
                 dust_vel3_ghost = 0.0;
-                rho_Np_ghost = pmb->pphase_change->rho_Np_array(dust_id/N_Z, k, j, iu);
+
+                //[26.03.27]Zhixuan: now set the number density to the number density function in the dustfluids
+                // rho_Np_ghost = pmb->pphase_change->rho_Np_array(dust_id/N_Z, k, j, iu);
+                int dustn_id = N_P*N_Z + 1 + dust_id/N_Z; 
+                int n_id = 4*dustn_id;
+                int nv1_id = n_id + 1;
+                int nv2_id = n_id + 2;
+                int nv3_id = n_id + 3;
+
+                prim_df(n_id, k, j, iu+i) = prim_df(n_id, k, j, iu)*SQR(rad_active/rad_ghost);
+                // prim_df(n_id, k, j, iu+i) = dust_sigma_ghost/pmb->pphase_change->m_p_array(dust_id/N_Z, k, j, iu+i);
+                prim_df(nv1_id, k, j, iu+i) = v_drift_peb;
+                prim_df(nv2_id, k, j, iu+i) = vel_dust_phi;
+                prim_df(nv3_id, k, j, iu+i) = 0.0;
+
             }else{
                 dust_sigma_ghost = DenProfileCyl_gas(rad_ghost, phi_ghost, z_ghost)*initial_D2G[dust_id]*std::sqrt(2.*PI)*h_gas;
                 dust_vel1_ghost = gas_vel1_ghost;

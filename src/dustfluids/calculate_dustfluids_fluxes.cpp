@@ -22,6 +22,7 @@
 #include "dustfluids_diffusion_cc/cell_center_diffusions.hpp"
 #include "dustfluids_drags/dust_gas_drag.hpp"
 #include "srcterms/dustfluids_srcterms.hpp"
+#include "../phase_change/phase_change.hpp"  //[26.03.30]Zhixuan: for coping the flux
 
 
 // OpenMP header
@@ -57,17 +58,37 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
   il = is - NGHOST; iu = ie + NGHOST;
 
   // calculate concentration
-  for (int n=0; n<NDUSTFLUIDS; ++n){
+  for (int n=0; n<N_P*N_Z+1; ++n){
     int rho_id = 4*n;
     for (int k=kl; k<=ku; ++k) {
       for (int j=jl; j<=ju; ++j) {
 #pragma omp simd
         for (int i=il; i<=iu; ++i) {
-          r_(n,k,j,i) = prim_df(rho_id,k,j,i)/prim_gas(IDN,k,j,i);
+          if (n == vapor_id) {
+            r_(n,k,j,i) = prim_df(rho_id,k,j,i)/prim_gas(IDN,k,j,i); // vapor concentration
+          } else {
+            r_(n,k,j,i) = prim_df(rho_id,k,j,i)/prim_gas(IDN,k,j,i); // pebble concentration
+            
+            //[26.03.30]Zhixuan: for number density, the flux of it is the flux_dust/m_p
+            int p = n/N_Z;
+            int dustn_id = N_P*N_Z + 1 + p;
+            int sil_id = (p+1)*N_Z - 1; // silicate density for this pebble
+            // std::cout <<"p = " << p << ", sil_id = " << sil_id << ", dustn_id = " << dustn_id << std::endl;
+            Real rho_sil = prim_df(4*sil_id, k, j, i);
+            Real rho_pop = 0.0;
+            for (int zi = 0; zi < N_Z; ++zi) {
+              int dust_id = N_Z * p + zi; 
+              rho_pop += prim_df(4*dust_id, k, j, i);
+            }
+            Real m_sil = pmb->pphase_change->m_p_array(n/N_Z, k, j, i) * (rho_sil/rho_pop); // mass of silicate per pebble
+            // r_(dustn_id,k,j,i) =1./pmb->pphase_change->m_p_array(n/N_Z, k, j, i);
+            r_(dustn_id,k,j,i) = prim_df(dustn_id*4,k,j,i)/prim_df(sil_id*4,k,j,i);
+              
+            }
+          }
         }
       }
     }
-  }
   //////////////////////
 
   //--------------------------------------------------------------------------------------
@@ -124,6 +145,15 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
             x1flux(rho_id,k,j,ie+1) = inflx_dust_x1(n,k,j,0); // inflx of dustfluids
             // x1flux(rho_id+1,k,j,ie+1) = inflx_dust_x1(n,k,j,0)*prim_df(rho_id+1,k,j,ie+1);
             x1flux(rho_id+2,k,j,ie+1) = inflx_dust_x1(n,k,j,0)*prim_df(rho_id+2,k,j,ie+1);
+
+            // int n_id = N_P*N_Z + 1 + n/N_Z;
+            // int dustn_id = 4*n_id;
+            // x1flux(dustn_id,k,j,ie+1) = inflx_dust_x1(n_id,k,j,0);
+            // x1flux(dustn_id+2,k,j,ie+1) = inflx_dust_x1(n_id,k,j,0)*prim_df(dustn_id+2,k,j,ie+1);
+
+            // std::cout << "Applying flux correction for dust fluid " << n << " at outer x1 boundary: " << inflx_dust_x1(n,k,j,0) << std::endl; 
+            // std::cout << "Applying flux correction for dust fluid " << n_id << " at outer x1 boundary: " << inflx_dust_x1(n_id,k,j,0) << std::endl;
+
             // if (inflx_dust_x1(n,k,j,0) >= 0.0) {
             //   std::cout << "Warning: Inflow flux of dust fluid " << n << " is non-positive at outer x1 boundary. Flux correction may not be applied." << std::endl;
             //   std::cout << "influx_dust_x1(" << n << ",k=" << k << ",j=" << j << ") = " << inflx_dust_x1(n,k,j,0) << std::endl;
@@ -132,6 +162,11 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
         }
       } // end if(FLX_COR)
       // copy hydro mass flux to tracer. (Yu, 2025-11-18)
+      // [26.03.30]Zhixuan: also copy the mass flux for number density, since it's not in the per-pebble array 
+      // std::cout << x1flux(0,k,j,2) << std::endl; // debug
+      // std::cout << x1flux(12,k,j,2) << std::endl; // debug
+      // std::cout << rl_(3,2) << ", " << rr_(3,2) << std::endl; // debug
+
       TracerUpwindFlux(k, j, is, ie+1, rl_, rr_, gas_mass_flux, x1flux);
 
       if (order == 4) {
