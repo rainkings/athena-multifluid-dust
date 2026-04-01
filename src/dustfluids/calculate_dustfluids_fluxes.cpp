@@ -74,13 +74,13 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
             int dustn_id = N_P*N_Z + 1 + p;
             int sil_id = (p+1)*N_Z - 1; // silicate density for this pebble
             // std::cout <<"p = " << p << ", sil_id = " << sil_id << ", dustn_id = " << dustn_id << std::endl;
-            Real rho_sil = prim_df(4*sil_id, k, j, i);
-            Real rho_pop = 0.0;
-            for (int zi = 0; zi < N_Z; ++zi) {
-              int dust_id = N_Z * p + zi; 
-              rho_pop += prim_df(4*dust_id, k, j, i);
-            }
-            Real m_sil = pmb->pphase_change->m_p_array(n/N_Z, k, j, i) * (rho_sil/rho_pop); // mass of silicate per pebble
+            // Real rho_sil = prim_df(4*sil_id, k, j, i);
+            // Real rho_pop = 0.0;
+            // for (int zi = 0; zi < N_Z; ++zi) {
+            //   int dust_id = N_Z * p + zi; 
+            //   rho_pop += prim_df(4*dust_id, k, j, i);
+            // }
+            // Real m_sil = pmb->pphase_change->m_p_array(n/N_Z, k, j, i) * (rho_sil/rho_pop); // mass of silicate per pebble
             // r_(dustn_id,k,j,i) =1./pmb->pphase_change->m_p_array(n/N_Z, k, j, i);
             r_(dustn_id,k,j,i) = prim_df(dustn_id*4,k,j,i)/prim_df(sil_id*4,k,j,i);
               

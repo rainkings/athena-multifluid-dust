@@ -526,45 +526,45 @@ void MeshBlock::UserWorkInLoop(){
         }
 
         // copy refractory velocity to number density for each population 
-        if (N_P >=2 ) {
-          for (int p = 0; p < N_P; ++p) {
-            int refrac_id = N_Z*(p+1)-1; // last index in each pebble size bin 
-            int ice_id = N_Z*p;          // first index in each pebble size bin 
-
-            int refrac_rho_id  = 4*refrac_id;
-            int refrac_v1_id   = refrac_rho_id + 1;
-            int refrac_v2_id   = refrac_rho_id + 2;
-            int refrac_v3_id   = refrac_rho_id + 3;
-            
-            const Real &d1_vel1 = pdustfluids->df_w(refrac_v1_id,  k, j, i);
-            const Real &d1_vel2 = pdustfluids->df_w(refrac_v2_id,  k, j, i);
-            const Real &d1_vel3 = pdustfluids->df_w(refrac_v3_id,  k, j, i);
-
-            int dustn_id = N_P*N_Z + 1 + p;
-            int n_id = 4*dustn_id;
-            int nv1_id = n_id + 1;
-            int nv2_id = n_id + 2;
-            int nv3_id = n_id + 3;
-
-            Real &n_vel1 = pdustfluids->df_w(nv1_id,  k, j, i);
-            Real &n_vel2 = pdustfluids->df_w(nv2_id,  k, j, i);
-            Real &n_vel3 = pdustfluids->df_w(nv3_id,  k, j, i);
-
-            const Real &n_rho  = pdustfluids->df_u(n_id, k, j, i);
-            Real &n_mom1 = pdustfluids->df_u(nv1_id,  k, j, i);
-            Real &n_mom2 = pdustfluids->df_u(nv2_id,  k, j, i);
-            Real &n_mom3 = pdustfluids->df_u(nv3_id,  k, j, i);
-
-            n_vel1 = d1_vel1;
-            n_vel2 = d1_vel2;
-            n_vel3 = d1_vel3; 
-            n_mom1 = n_rho*d1_vel1;
-            n_mom2 = n_rho*d1_vel2;
-            n_mom3 = n_rho*d1_vel3;
-            
-          }
-
-        }
+        // if (N_P >=2 ) {
+        //   for (int p = 0; p < N_P; ++p) {
+        //     int refrac_id = N_Z*(p+1)-1; // last index in each pebble size bin 
+        //     int ice_id = N_Z*p;          // first index in each pebble size bin 
+        //
+        //     int refrac_rho_id  = 4*refrac_id;
+        //     int refrac_v1_id   = refrac_rho_id + 1;
+        //     int refrac_v2_id   = refrac_rho_id + 2;
+        //     int refrac_v3_id   = refrac_rho_id + 3;
+        //
+        //     const Real &d1_vel1 = pdustfluids->df_w(refrac_v1_id,  k, j, i);
+        //     const Real &d1_vel2 = pdustfluids->df_w(refrac_v2_id,  k, j, i);
+        //     const Real &d1_vel3 = pdustfluids->df_w(refrac_v3_id,  k, j, i);
+        //
+        //     int dustn_id = N_P*N_Z + 1 + p;
+        //     int n_id = 4*dustn_id;
+        //     int nv1_id = n_id + 1;
+        //     int nv2_id = n_id + 2;
+        //     int nv3_id = n_id + 3;
+        //
+        //     Real &n_vel1 = pdustfluids->df_w(nv1_id,  k, j, i);
+        //     Real &n_vel2 = pdustfluids->df_w(nv2_id,  k, j, i);
+        //     Real &n_vel3 = pdustfluids->df_w(nv3_id,  k, j, i);
+        //
+        //     const Real &n_rho  = pdustfluids->df_u(n_id, k, j, i);
+        //     Real &n_mom1 = pdustfluids->df_u(nv1_id,  k, j, i);
+        //     Real &n_mom2 = pdustfluids->df_u(nv2_id,  k, j, i);
+        //     Real &n_mom3 = pdustfluids->df_u(nv3_id,  k, j, i);
+        //
+        //     n_vel1 = d1_vel1;
+        //     n_vel2 = d1_vel2;
+        //     n_vel3 = d1_vel3; 
+        //     n_mom1 = n_rho*d1_vel1;
+        //     n_mom2 = n_rho*d1_vel2;
+        //     n_mom3 = n_rho*d1_vel3;
+        //
+        //   }
+        //
+        // }
 
         //apply floor value
         for (int n=0; n<NDUSTFLUIDS; n++) {
@@ -692,8 +692,8 @@ void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin){
                 m_p = pphase_change->Get_m_p_from_rho_Np(rho_comps, rho_Np_column); // [code_mass]
                 s_p = pphase_change->Get_s_p_from_m_p(m_p, rho_comps); // [code_length]
             } else{
-                m_p = rho_comps(0)/rho_Np_column; 
-                // m_p = pphase_change->m_p_array(p, k, j, i); 
+                // m_p = rho_comps(0)/rho_Np_column; 
+                m_p = pphase_change->m_p_array(p, k, j, i); 
                 s_p = std::pow(3.0*m_p/(4.0*PI*3.0/punit->code_density_cgs), 1.0/3.0);
 
             }
@@ -743,11 +743,20 @@ void MySource(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<
   //
   // std::cout << "At (i,j,k)=(" << 2 << "," << 0 << "," << 0 << "):" << std::endl;
   // std::cout << "v1_sil_small = " << v1_sil_small << std::endl;
-
+//
+// std::cout << cons_df(4*0, 0, 0, 2) << std::endl;
+// std::cout << cons_df(4*1, 0, 0, 2) << std::endl;
+// std::cout << cons_df(4*3, 0, 0, 2) << std::endl;
+// std::cout << cons_df(4*4, 0, 0, 2) << std::endl;
 
   if (N_P > 1 and time >dust_start_injection and Relaxation_Flag){
     pmb->pphase_change->RelaxationSource(pmb, time, dt, gm0, alpha_vis, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s, v_frag);
   }
+// std::cout << cons_df(4*0, 0, 0, 2) << std::endl;
+// std::cout << cons_df(4*1, 0, 0, 2) << std::endl;
+// std::cout << cons_df(4*3, 0, 0, 2) << std::endl;
+// std::cout << cons_df(4*4, 0, 0, 2) << std::endl;
+// std::cout << "........" << std::endl;
 
   return;
 }
@@ -787,11 +796,20 @@ void MyDustDiffusivity(DustFluids *pdf, MeshBlock *pmb,
         for (int p = 0; p < N_P; ++p) {
           // Get stopping time for this pebble (all compositions have same stopping time)
           int dust_id_first = N_Z * p; // first composition of pebble p
+          int dustn_id = N_P*N_Z + 1 + p; // corresponding number density index for this pebble [26.03.31]Zhixuan
           Real t_stop = stopping_time(dust_id_first, k, j, i);
+          Real t_stop_n = stopping_time(dustn_id, k, j, i);
+
+          Real taus_n = t_stop_n*omega_dyn; 
+          Real &diffusivity_n = nu_dust(dustn_id, k, j, i);
+            diffusivity_n = gas_nu/(1.+SQR(taus_n));
+          Real &soundspeed_n  = cs_dust(dustn_id, k, j, i);
+            soundspeed_n        = std::sqrt(diffusivity_n/omega_dyn);
 
           // Calculate diffusivity for all compositions of this pebble
           for (int z = 0; z < N_Z; ++z) {
             int dust_id = N_Z * p + z;
+
             Real taus_peb = t_stop*omega_dyn;
             Real &diffusivity = nu_dust(dust_id, k, j, i);
             diffusivity = gas_nu/(1.+SQR(taus_peb));

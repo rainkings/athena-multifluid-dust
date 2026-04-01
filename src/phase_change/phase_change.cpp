@@ -889,16 +889,16 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
         rho_comps.NewAthenaArray(N_Z); // +1 for vapor
         s_p_array.NewAthenaArray(N_P);
         for (int p = 0; p < N_P; ++p) {
-          //
+
           for (int z = 0; z < N_Z; ++z) {
             Real dust_rho_id = N_Z * p + z;
             rho_comps(z) = cons_df(4*dust_rho_id, k, j, i);
           }
 
           // The number density is already updated during the phase_change process, so we can directly use them here.
-          Real &rho_Np_p = rho_Np_array(p, k, j, i);
-          // Derive m_p and s_p from rho_Np and current densities (Yu, 2025-11-18)
-          m_p_array(p,k,j,i) = Get_m_p_from_rho_Np(rho_comps, rho_Np_p); // [code_mass]
+          // Real &rho_Np_p = rho_Np_array(p, k, j, i);
+          // // Derive m_p and s_p from rho_Np and current densities (Yu, 2025-11-18)
+          // m_p_array(p,k,j,i) = Get_m_p_from_rho_Np(rho_comps, rho_Np_p); // [code_mass]
           s_p_array(p) = std::pow(m_p_array(p,k,j,i)/(FOUR_3RD*PI*rho_inte_relax), ONE_3RD); // [code_length]
         }
         // std::cout << "m_p_array(0) = " << m_p_array(0) << std::endl;
@@ -949,7 +949,7 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
           Real delV = std::sqrt(3*alpha_vis*St1*cs2); // relative velocity between the two populations, using the turbulent relative velocity for simplicity.
 
           //// Here we use volumn number density rather than the column number density 
-          Real rho_Np_vol = rho_Np_array(1,k,j,i)/std::sqrt(2*PI)/H_gas; // the bulk number density of pebbles, using the number density of the big population as a proxy.
+          Real rho_Np_vol = cons_df(4*4,k,j,i)/std::sqrt(2*PI)/H_gas; // the bulk number density of pebbles, using the number density of the big population as a proxy.
           Real t_relax = 1.0/(4*rho_Np_vol *PI*SQR(s_p_array(1)) * delV );
 
           //relax the current state to the relaxed state: 
@@ -957,8 +957,13 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
           Real rho_sil_small_new = rho_sil_small + relax_rate*(rho_relax_array(0) - rho_sil_small);
           Real rho_sil_big_new   = rho_sil_big   + relax_rate*(rho_relax_array(1) - rho_sil_big  );
 
-          Real n_small_new = rho_Np_array(0, k,j,i) + relax_rate*(n_relax_array(0) - rho_Np_array(0, k,j,i));  
-          Real n_big_new   = rho_Np_array(1, k,j,i) + relax_rate*(n_relax_array(1) - rho_Np_array(1, k,j,i));
+          Real n_small = cons_df(4*3, k, j, i); // the number density of the small population before relaxation 
+          Real n_big = cons_df(4*4, k, j, i); 
+
+          Real n_small_new = n_small + relax_rate*(n_relax_array(0) - n_small);
+          Real n_big_new = n_big + relax_rate*(n_relax_array(1) - n_big);
+          // Real n_small_new = rho_Np_array(0, k,j,i) + relax_rate*(n_relax_array(0) - rho_Np_array(0, k,j,i));  
+          // Real n_big_new   = rho_Np_array(1, k,j,i) + relax_rate*(n_relax_array(1) - rho_Np_array(1, k,j,i));
 
           // new characteristic mass 
           Real m_small_new = (rho_sil_small_new)/n_small_new; 
@@ -973,8 +978,14 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
           //assign the new values to the simulation: 
           cons_df(4*0, k, j, i) = std::fmax(rho_sil_small_new, dffloor_); // avoid negative density after relaxation 
           cons_df(4*1, k, j, i) = std::fmax(rho_sil_big_new, dffloor_);
-          rho_Np_array(0, k,j,i) = n_small_new;
-          rho_Np_array(1, k,j,i) = n_big_new;
+          cons_df(4*3, k, j, i) = std::fmax(n_small_new, dffloor_); //number density 
+          cons_df(4*4, k, j, i) = std::fmax(n_big_new, dffloor_);
+
+          //update the pebble mass array 
+          m_p_array(0,k,j,i) = m_small_new;
+          m_p_array(1,k,j,i) = m_big_new;
+          // rho_Np_array(0, k,j,i) = n_small_new;
+          // rho_Np_array(1, k,j,i) = n_big_new;
 
           //update the momentum accordingly
           cons_df(4*0+1, k, j, i) = cons_df(4*0, k, j, i) * v1_sil_small;
