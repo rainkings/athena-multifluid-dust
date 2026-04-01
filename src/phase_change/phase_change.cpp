@@ -11,6 +11,8 @@
 // C++ headers
 #include <cmath>
 #include <sstream>
+#include <vector>
+#include <numeric> //for std::iota
 
 // Athena++ headers
 #include "../athena.hpp"
@@ -826,236 +828,6 @@ Real PhaseChange::Get_stopping_time(Units *punit, AthenaArray<Real> rho_d, Real 
 // }
 //
 
-void PhaseChange::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt, const Real gm0, const Real alpha_vis,
-const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
-    const AthenaArray<Real> &prim_s, const AthenaArray<Real> &bcc,
-    AthenaArray<Real> &cons, AthenaArray<Real> &cons_df, AthenaArray<Real> &cons_s, AthenaArray<Real> &v_frag) {
-  for (int k=pmb->ks; k<=pmb->ke; ++k) {
-    for (int j=pmb->js; j<=pmb->je; ++j) {
-#pragma omp simd
-      for (int i=pmb->is; i<=pmb->ie; ++i) {
-        //// calculate the maximum mass restricted by the fragmentation velocity
-          Real rho_sil_small =cons_df(4*0, k, j, i);
-          Real rho_sil_big =cons_df(4*1, k, j, i);
-
-          if (rho_sil_small <= dffloor_ || rho_sil_big <= dffloor_) {
-            continue; // skip if either pebble size has insufficient material
-          }
-
-          Real v1_sil_small = cons_df(4*0+1, k, j, i)/rho_sil_small; 
-          Real v2_sil_small = cons_df(4*0+2, k, j, i)/rho_sil_small;
-          Real v3_sil_small = cons_df(4*0+3, k, j, i)/rho_sil_small;
-
-          Real v1_sil_big = cons_df(4*1+1, k, j, i)/rho_sil_big;
-          Real v2_sil_big = cons_df(4*1+2, k, j, i)/rho_sil_big;
-          Real v3_sil_big = cons_df(4*1+3, k, j, i)/rho_sil_big;
-
-          // std::cout << "Cell (" << k << "," << j << "," << i << "): " << std::endl;
-          // std::cout << "rho_sil_small = " << rho_sil_small << ", v_sil_small = (" << v1_sil_small << "," << v2_sil_small << "," << v3_sil_small << ")" << std::endl;
-          // std::cout << "cons_rho_sil_small = " << cons_df(4*0, k, j, i) << std::endl;
-          // std::cout << "cons_v1_sil_small = " << cons_df(4*0+1, k, j, i) << std::endl;
-          // std::cout << "cons_v2_sil_small = " << cons_df(4*0+2, k, j, i) << std::endl;
-
-          Real rad = pmb->pcoord->x1v(i); 
-          Real Tem = Tem_gas(rad); // [code_temperature]
-
-          Real sigma_g = cons(IDN, k, j, i);
-          Real sigma_v = cons_df(4*2, k, j, i);
-
-          Real OmegaK = std::sqrt(gm0/std::pow(pmb->pcoord->x1v(i), 3));
-
-          Real fv = sigma_v/sigma_g;
-          Real cs2 = Tem/KELVIN*Get_mu(fv);
-
-          Real H_gas = std::sqrt(cs2)/OmegaK;
-          
-          Real rho_g = sigma_g/(std::sqrt(2*PI)*H_gas);
-
-          Real v_frag_tot =v_frag(1);
-
-          Real vth = std::sqrt(8.0/PI)*std::sqrt(cs2); // [code_velocity] 
-
-          Real rho_inte_relax = rho_sil_inter_;
-          //too small, for the moment artificially enlarge it
-          Real s_max =SQR(v_frag_tot)/cs2 * rho_g*vth/3/alpha_vis/OmegaK/rho_inte_relax*5.e2;
-
-          Real m_max = FOUR_3RD*PI*SQR(s_max)*s_max*rho_inte_relax; // [code_mass]
-          //store the mmax 
-          mmax_array(k,j,i) = m_max;
-
-        // print the current m_p0_array
-        
-        AthenaArray<Real> rho_comps, s_p_array;
-        rho_comps.NewAthenaArray(N_Z); // +1 for vapor
-        s_p_array.NewAthenaArray(N_P);
-        for (int p = 0; p < N_P; ++p) {
-
-          for (int z = 0; z < N_Z; ++z) {
-            Real dust_rho_id = N_Z * p + z;
-            rho_comps(z) = cons_df(4*dust_rho_id, k, j, i);
-          }
-
-          // The number density is already updated during the phase_change process, so we can directly use them here.
-          // Real &rho_Np_p = rho_Np_array(p, k, j, i);
-          // // Derive m_p and s_p from rho_Np and current densities (Yu, 2025-11-18)
-          // m_p_array(p,k,j,i) = Get_m_p_from_rho_Np(rho_comps, rho_Np_p); // [code_mass]
-          s_p_array(p) = std::pow(m_p_array(p,k,j,i)/(FOUR_3RD*PI*rho_inte_relax), ONE_3RD); // [code_length]
-        }
-        // std::cout << "m_p_array(0) = " << m_p_array(0) << std::endl;
-        //calculate the q_before 
-        Real q_before = std::log((rho_sil_big)/(rho_sil_small))/std::log(m_p_array(1,k,j,i)/m_p_array(0,k,j,i)); // the effective powerlaw index of the current state
-        if (std::abs(q_before - 1.0/6.0)/1.0*6.0 > 1.e-6) {
-
-          //get the 1st moments for populations at the current state. 
-          AthenaArray<Real> M1_array;
-          M1_array.NewAthenaArray(N_P);
-          M1_array(0) = rho_sil_small;
-          M1_array(1) = rho_sil_big;
-
-          // The 1st moments should be conserved (mass conservation)
-          Real M1_relax = M1_array(0) + M1_array(1);
-
-          //get the distribution of the relaxation state: f*(m) = c* m^(-11/6) (assume the relaxed state is the MRN distribution)
-          Real c_relax = M1_relax/6/(std::pow(m_max, 1.0/6.0) - std::pow(mmin,1.0/6.0));
-          Real M2_relax = c_relax*6/7*(std::pow(m_max, 7.0/6.0) - std::pow(mmin,7.0/6.0)); // the 2nd moment of the relaxed state 
-
-          // the division mass 
-          Real m_01 = std::pow(mmin*m_max, 0.5); 
-
-          // the relaxed moments for populations 
-          AthenaArray<Real> M1_relax_array, M2_relax_array;
-          M1_relax_array.NewAthenaArray(N_P);
-          M2_relax_array.NewAthenaArray(N_P);
-          M1_relax_array(0) =c_relax*6*(std::pow(m_01, 1.0/6.0) - std::pow(mmin, 1.0/6.0)); 
-          M1_relax_array(1) = M1_relax - M1_relax_array(0);  
-          M2_relax_array(0) = c_relax*6/7*(std::pow(m_01, 7.0/6.0) - std::pow(mmin, 7.0/6.0));
-          M2_relax_array(1) = M2_relax - M2_relax_array(0);
-
-          //from the moments we get the relaxed state distribution. 
-          AthenaArray<Real> rho_relax_array, n_relax_array;
-          rho_relax_array.NewAthenaArray(N_P);
-          n_relax_array.NewAthenaArray(N_P);
-
-          rho_relax_array(0) = M1_relax_array(0);
-          rho_relax_array(1) = M1_relax_array(1);
-
-          n_relax_array(0) = SQR(M1_relax_array(0))/M2_relax_array(0);
-          n_relax_array(1) = SQR(M1_relax_array(1))/M2_relax_array(1);
-
-          //divide the relaxed state velues according to composition 
-          // relaxation timescale: the collisional timescale. 
-          Real t_stop = pmb->pdustfluids->stopping_time_array(1, k, j, i);
-          Real St1 = t_stop*OmegaK;
-          Real delV = std::sqrt(3*alpha_vis*St1*cs2); // relative velocity between the two populations, using the turbulent relative velocity for simplicity.
-
-          //// Here we use volumn number density rather than the column number density 
-          Real rho_Np_vol = cons_df(4*4,k,j,i)/std::sqrt(2*PI)/H_gas; // the bulk number density of pebbles, using the number density of the big population as a proxy.
-          Real t_relax = 1.0/(4*rho_Np_vol *PI*SQR(s_p_array(1)) * delV );
-
-          //relax the current state to the relaxed state: 
-          Real relax_rate = dt/t_relax;
-          Real rho_sil_small_new = rho_sil_small + relax_rate*(rho_relax_array(0) - rho_sil_small);
-          Real rho_sil_big_new   = rho_sil_big   + relax_rate*(rho_relax_array(1) - rho_sil_big  );
-
-          Real n_small = cons_df(4*3, k, j, i); // the number density of the small population before relaxation 
-          Real n_big = cons_df(4*4, k, j, i); 
-
-          Real n_small_new = n_small + relax_rate*(n_relax_array(0) - n_small);
-          Real n_big_new = n_big + relax_rate*(n_relax_array(1) - n_big);
-          // Real n_small_new = rho_Np_array(0, k,j,i) + relax_rate*(n_relax_array(0) - rho_Np_array(0, k,j,i));  
-          // Real n_big_new   = rho_Np_array(1, k,j,i) + relax_rate*(n_relax_array(1) - rho_Np_array(1, k,j,i));
-
-          // new characteristic mass 
-          Real m_small_new = (rho_sil_small_new)/n_small_new; 
-          Real m_big_new = (rho_sil_big_new)/n_big_new;
-
-          // if (i ==2){
-          // std::cout << rho_Np_array(1, k,j,i) << " -> " << n_big_new << std::endl;
-          // std::cout << m_p_array(1,k,j,i) << " -> " << m_big_new << std::endl;
-          // std::cout << rho_sil_big << " -> " << rho_sil_big_new << std::endl;
-          // }
-
-          //assign the new values to the simulation: 
-          cons_df(4*0, k, j, i) = std::fmax(rho_sil_small_new, dffloor_); // avoid negative density after relaxation 
-          cons_df(4*1, k, j, i) = std::fmax(rho_sil_big_new, dffloor_);
-          cons_df(4*3, k, j, i) = std::fmax(n_small_new, dffloor_); //number density 
-          cons_df(4*4, k, j, i) = std::fmax(n_big_new, dffloor_);
-
-          //update the pebble mass array 
-          m_p_array(0,k,j,i) = m_small_new;
-          m_p_array(1,k,j,i) = m_big_new;
-          // rho_Np_array(0, k,j,i) = n_small_new;
-          // rho_Np_array(1, k,j,i) = n_big_new;
-
-          //update the momentum accordingly
-          cons_df(4*0+1, k, j, i) = cons_df(4*0, k, j, i) * v1_sil_small;
-          cons_df(4*0+2, k, j, i) = cons_df(4*0, k, j, i) * v2_sil_small;
-          cons_df(4*0+3, k, j, i) = cons_df(4*0, k, j, i) * v3_sil_small; 
-
-          cons_df(4*1+1, k, j, i) = cons_df(4*1, k, j, i) * v1_sil_big;
-          cons_df(4*1+2, k, j, i) = cons_df(4*1, k, j, i) * v2_sil_big;
-          cons_df(4*1+3, k, j, i) = cons_df(4*1, k, j, i) * v3_sil_big;
-
-          // std::cout << "after Cell (" << k << "," << j << "," << i << "): " << std::endl;
-          // std::cout << "rho_sil_small = " << rho_sil_small << ", v_sil_small = (" << v1_sil_small << "," << v2_sil_small << "," << v3_sil_small << ")" << std::endl;
-          // std::cout << "cons_rho_sil_small = " << cons_df(4*0, k, j, i) << std::endl;
-          // std::cout << "cons_v1_sil_small = " << cons_df(4*0+1, k, j, i) << std::endl;
-          // std::cout << "cons_v2_sil_small = " << cons_df(4*0+2, k, j, i) << std::endl;
-          // if (time > 0.0){
-          //   std::cout << "v1_sil_small=" << v1_sil_small << ", v1_sil_big=" << v1_sil_big << std::endl;
-          // if (std::isnan(v1_sil_small) || std::isnan(v1_sil_big)){
-          //   std::cout << "v1_sil_small=" << v1_sil_small << ", v1_sil_big=" << v1_sil_big << std::endl;
-          // }
-          // }
-
-
-          //compare the powerlaw index before and after the relaxation
-          Real q_after = std::log((rho_sil_big_new)/(rho_sil_small_new))/std::log(m_big_new/m_small_new); // the effective powerlaw index of the relaxed state
-
-          if ((q_after-1.0/6.0)/(q_before-1.0/6.0)<0.0){
-            std::cout << "overshoot" << std::endl;
-          }
-
-          //check mass conservation 
-          Real mass_before = rho_sil_small + rho_sil_big;
-          Real mass_after = rho_sil_small_new + rho_sil_big_new;
-          if (std::abs(mass_after - mass_before)/mass_before > 1.e-10){
-            std::cout << "### WARNING: Mass not conserved during relaxation at cell (" << k << "," << j << "," << i << ")" << std::endl;
-            std::cout << "Mass before relaxation: " << mass_before << std::endl;
-            std::cout << "Mass after relaxation: " << mass_after << std::endl;
-          }
-
-        } else{
-          //still update the rho_Np_array.
-
-          // std::cout << "No relaxation needed at cell (" << k << "," << j << "," << i << ")" << std::endl;
-        }
-          // std::cout << "Effective powerlaw index before relaxation: " << q_before << std::endl;
-          // std::cout << "Effective powerlaw index after relaxation: " << q_after << std::endl;
-
-
-          //check the quantities changed by the relaxation process:
-          // std::cout << "Relaxation at cell (" << k << "," << j << "," << i << "): " << std::endl;
-          // std::cout << "c_relax: " << c_relax << std::endl;
-          // std::cout << "rho_ice_small: " << rho_ice_small << " -> " << rho_ice_small_new << std::endl;
-          // std::cout << "rho_sil_small: " << rho_sil_small << " -> " << rho_sil_small_new << std::endl;
-          // std::cout << "rho_ice_big: " << rho_ice_big << " -> " << rho_ice_big_new << std::endl;
-          // std::cout << "rho_sil_big: " << rho_sil_big << " -> " << rho_sil_big_new << std::endl;
-          // std::cout << "n_small: " << rho_Np_array(0, k,j,i) << " -> " << n_small_new << std::endl;
-          // std::cout << "n_big: " << rho_Np_array(1, k,j,i) << " -> " << n_big_new << std::endl;
-          // std::cout << "t_relax: " << t_relax << std::endl;
-          // std::cout << "relax_rate: " << relax_rate << std::endl;
-          // std::cout << "m_max: " << m_max << std::endl;
-          
-          
-       }
-     }
-  }
-}
-
-Real PhaseChange::Tem_gas(const Real rad){
-    return Tem0*std::pow(rad/r0, Tslope);
-}
 // void PhaseChange::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt, const Real gm0, const Real alpha_vis,
 // const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
 //     const AthenaArray<Real> &prim_s, const AthenaArray<Real> &bcc,
@@ -1065,149 +837,423 @@ Real PhaseChange::Tem_gas(const Real rad){
 // #pragma omp simd
 //       for (int i=pmb->is; i<=pmb->ie; ++i) {
 //         //// calculate the maximum mass restricted by the fragmentation velocity
-//         Real rad = pmb->pcoord->x1v(i); 
-//         Real Tem = pmb->phydro->Tem(k,j,i); 
+//           Real rho_sil_small =cons_df(4*0, k, j, i);
+//           Real rho_sil_big =cons_df(4*1, k, j, i);
 //
-//         Real rho_g = cons(IDN, k, j, i);
-//         Real rho_v = cons_df(4*4+1, k, j, i);
-//         Real fv = rho_v/rho_g;
-//
-//         Real rho_sil_small =cons_df(4*1, k, j, i);
-//         Real rho_ice_small =cons_df(4*0, k, j, i);
-//         Real rho_sil_big =cons_df(4*3, k, j, i);
-//         Real rho_ice_big =cons_df(4*2, k, j, i);
-//
-//         Real fice_big = rho_ice_big/(rho_ice_big+rho_sil_big); 
-//
-//         Real v_frag_tot = fice_big*v_frag(0) + (1.0-fice_big)*v_frag(1);
-//
-//         Real OmegaK = std::sqrt(gm0/std::pow(pmb->pcoord->x1v(i), 3));
-//
-//         Real cs2 = Tem/KELVIN*Get_mu(fv);
-//         Real vth = std::sqrt(8.0/PI)*std::sqrt(cs2); // [code_velocity] 
-//
-//         Real s_max =SQR(v_frag_tot)/cs2 * rho_g*vth/9/alpha_vis/OmegaK/1e4; // too large...
-//         Real rho_inte_relax = 0.5*(rho_ice_inter_ + rho_sil_inter_);
-//         Real m_max = FOUR_3RD*PI*SQR(s_max)*s_max*rho_inte_relax; // [code_mass]
-//         // print the current m_p0_array
-//
-//         AthenaArray<Real> rho_comps, m_p_array;;
-//         rho_comps.NewAthenaArray(N_Z); // +1 for vapor
-//         m_p_array.NewAthenaArray(N_P);
-//         for (int p = 0; p < N_P; ++p) {
-//           //
-//           for (int z = 0; z < N_Z; ++z) {
-//             Real dust_rho_id = N_Z * p + z;
-//             rho_comps(z) = cons_df(4*dust_rho_id, k, j, i);
+//           if (rho_sil_small <= dffloor_ || rho_sil_big <= dffloor_) {
+//             continue; // skip if either pebble size has insufficient material
 //           }
 //
-//           // The number density is already updated during the phase_change process, so we can directly use them here.
-//           Real &rho_Np_p = rho_Np_array(p, k, j, i);
-//           // Derive m_p and s_p from rho_Np and current densities (Yu, 2025-11-18)
-//           m_p_array(p) = Get_m_p_from_rho_Np(rho_comps, rho_Np_p); // [code_mass]
+//           Real v1_sil_small = cons_df(4*0+1, k, j, i)/rho_sil_small; 
+//           Real v2_sil_small = cons_df(4*0+2, k, j, i)/rho_sil_small;
+//           Real v3_sil_small = cons_df(4*0+3, k, j, i)/rho_sil_small;
 //
+//           Real v1_sil_big = cons_df(4*1+1, k, j, i)/rho_sil_big;
+//           Real v2_sil_big = cons_df(4*1+2, k, j, i)/rho_sil_big;
+//           Real v3_sil_big = cons_df(4*1+3, k, j, i)/rho_sil_big;
+//
+//           // std::cout << "Cell (" << k << "," << j << "," << i << "): " << std::endl;
+//           // std::cout << "rho_sil_small = " << rho_sil_small << ", v_sil_small = (" << v1_sil_small << "," << v2_sil_small << "," << v3_sil_small << ")" << std::endl;
+//           // std::cout << "cons_rho_sil_small = " << cons_df(4*0, k, j, i) << std::endl;
+//           // std::cout << "cons_v1_sil_small = " << cons_df(4*0+1, k, j, i) << std::endl;
+//           // std::cout << "cons_v2_sil_small = " << cons_df(4*0+2, k, j, i) << std::endl;
+//
+//           Real rad = pmb->pcoord->x1v(i); 
+//           Real Tem = Tem_gas(rad); // [code_temperature]
+//
+//           Real sigma_g = cons(IDN, k, j, i);
+//           Real sigma_v = cons_df(4*2, k, j, i);
+//
+//           Real OmegaK = std::sqrt(gm0/std::pow(pmb->pcoord->x1v(i), 3));
+//
+//           Real fv = sigma_v/sigma_g;
+//           Real cs2 = Tem/KELVIN*Get_mu(fv);
+//
+//           Real H_gas = std::sqrt(cs2)/OmegaK;
+//
+//           Real rho_g = sigma_g/(std::sqrt(2*PI)*H_gas);
+//
+//           Real v_frag_tot =v_frag(1);
+//
+//           Real vth = std::sqrt(8.0/PI)*std::sqrt(cs2); // [code_velocity] 
+//
+//           Real rho_inte_relax = rho_sil_inter_;
+//           //too small, for the moment artificially enlarge it
+//           Real s_max =SQR(v_frag_tot)/cs2 * rho_g*vth/3/alpha_vis/OmegaK/rho_inte_relax*5.e2;
+//
+//           Real m_max = FOUR_3RD*PI*SQR(s_max)*s_max*rho_inte_relax; // [code_mass]
+//           //store the mmax 
+//           mmax_array(k,j,i) = m_max;
+//
+//         // print the current m_p0_array
+//
+//         AthenaArray<Real> rho_comps, s_p_array;
+//         rho_comps.NewAthenaArray(N_Z); // +1 for vapor
+//         s_p_array.NewAthenaArray(N_P);
+//         for (int p = 0; p < N_P; ++p) {
+//
+//           // for (int z = 0; z < N_Z; ++z) {
+//           //   Real dust_rho_id = N_Z * p + z;
+//           //   rho_comps(z) = cons_df(4*dust_rho_id, k, j, i);
+//           // }
+//
+//           // The number density is already updated during the phase_change process, so we can directly use them here.
+//           // Real &rho_Np_p = rho_Np_array(p, k, j, i);
+//           // // Derive m_p and s_p from rho_Np and current densities (Yu, 2025-11-18)
+//           // m_p_array(p,k,j,i) = Get_m_p_from_rho_Np(rho_comps, rho_Np_p); // [code_mass]
+//           s_p_array(p) = std::pow(m_p_array(p,k,j,i)/(FOUR_3RD*PI*rho_inte_relax), ONE_3RD); // [code_length]
 //         }
 //         // std::cout << "m_p_array(0) = " << m_p_array(0) << std::endl;
-//
-//         //get the 1st moments for populations at the current state. 
-//         AthenaArray<Real> M1_array;
-//         M1_array.NewAthenaArray(N_P);
-//         M1_array(0) = rho_ice_small + rho_sil_small;
-//         M1_array(1) = rho_ice_big + rho_sil_big;
-//
-//         // The 1st moments should be conserved (mass conservation)
-//         Real M1_relax = M1_array(0) + M1_array(1);
-//
-//         //get the distribution of the relaxation state: f*(m) = c* m^(-11/6) (assume the relaxed state is the MRN distribution)
-//         Real c_relax = M1_relax/6/(std::pow(m_max, 1.0/6.0) - std::pow(mmin,1.0/6.0));
-//         Real M2_relax = c_relax*6/7*(std::pow(m_max, 7.0/6.0) - std::pow(mmin,7.0/6.0)); // the 2nd moment of the relaxed state 
-//
-//         // the division mass 
-//         Real m_01 = std::pow(mmin*m_max, 0.5); 
-//
-//         // the relaxed moments for populations 
-//         AthenaArray<Real> M1_relax_array, M2_relax_array;
-//         M1_relax_array.NewAthenaArray(N_P);
-//         M2_relax_array.NewAthenaArray(N_P);
-//         M1_relax_array(0) =c_relax*6*(std::pow(m_01, 1.0/6.0) - std::pow(mmin, 1.0/6.0)); 
-//         M1_relax_array(1) = M1_relax - M1_relax_array(0);  
-//         M2_relax_array(0) = c_relax*6/7*(std::pow(m_01, 7.0/6.0) - std::pow(mmin, 7.0/6.0));
-//         M2_relax_array(1) = M2_relax - M2_relax_array(0);
-//
-//         //from the moments we get the relaxed state distribution. 
-//         AthenaArray<Real> rho_relax_array, n_relax_array;
-//         rho_relax_array.NewAthenaArray(N_P);
-//         n_relax_array.NewAthenaArray(N_P);
-//
-//         rho_relax_array(0) = M1_relax_array(0);
-//         rho_relax_array(1) = M1_relax_array(1);
-//
-//         n_relax_array(0) = SQR(M1_relax_array(0))/M2_relax_array(0);
-//         n_relax_array(1) = SQR(M1_relax_array(1))/M2_relax_array(1);
-//
-//         //divide the relaxed state velues according to composition 
-//         AthenaArray<Real> rho_ice_relax_array, rho_sil_relax_array; 
-//         rho_ice_relax_array.NewAthenaArray(N_P);
-//         rho_sil_relax_array.NewAthenaArray(N_P);
-//         for (int p = 0; p < N_P; ++p) {
-//           Real f_ice_p = (rho_ice_big + rho_ice_small)/M1_array(p); // ice mass fraction for population p at the current state
-//           rho_ice_relax_array(p) = f_ice_p*rho_relax_array(p);
-//           rho_sil_relax_array(p) = (1-f_ice_p)*rho_relax_array(p);
-//         }
-//
-//         // relaxation timescale: the collisional timescale. 
-//         Real St1 = pmb->pdustfluids->stopping_time_array(1, k, j, i);
-//         Real delV = std::sqrt(3*alpha_vis*St1*cs2); // relative velocity between the two populations, using the turbulent relative velocity for simplicity.
-//         Real t_relax = 1.0/(4*rho_Np_array(1, k,j,i) *PI*SQR(m_p_array(1)) * delV )/1.0e20;
-//
-//         //relax the current state to the relaxed state: 
-//         Real relax_rate = dt/t_relax;
-//         Real rho_ice_small_new = rho_ice_small + relax_rate*(rho_ice_relax_array(0) - rho_ice_small); 
-//         Real rho_sil_small_new = rho_sil_small + relax_rate*(rho_sil_relax_array(0) - rho_sil_small);
-//         Real rho_ice_big_new = rho_ice_big + relax_rate*(rho_ice_relax_array(1) - rho_ice_big);
-//         Real rho_sil_big_new = rho_sil_big + relax_rate*(rho_sil_relax_array(1) - rho_sil_big);
-//
-//         Real n_small_new = rho_Np_array(0, k,j,i) + relax_rate*(n_relax_array(0) - rho_Np_array(0, k,j,i));  
-//         Real n_big_new = rho_Np_array(1, k,j,i) + relax_rate*(n_relax_array(1) - rho_Np_array(1, k,j,i));
-//
-//         // new characteristic mass 
-//         Real m_small_new = (rho_ice_small_new + rho_sil_small_new)/n_small_new; 
-//         Real m_big_new = (rho_ice_big_new + rho_sil_big_new)/n_big_new;
-//
 //         //calculate the q_before 
-//         Real q_before = std::log((rho_ice_big + rho_sil_big)/(rho_ice_small + rho_sil_small))/std::log(m_p_array(1)/m_p_array(0)); // the effective powerlaw index of the current state
+//         Real q_before = std::log((rho_sil_big)/(rho_sil_small))/std::log(m_p_array(1,k,j,i)/m_p_array(0,k,j,i)); // the effective powerlaw index of the current state
+//         if (std::abs(q_before - 1.0/6.0)/1.0*6.0 > 1.e-6) {
 //
-//         //assign the new values to the simulation: 
-//         cons_df(4*0+1, k, j, i) = rho_ice_small_new;
-//         cons_df(4*1+1, k, j, i) = rho_sil_small_new;
-//         cons_df(4*2+1, k, j, i) = rho_ice_big_new;
-//         cons_df(4*3+1, k, j, i) = rho_sil_big_new;
-//         rho_Np_array(0, k,j,i) = n_small_new;
-//         rho_Np_array(1, k,j,i) = n_big_new;
+//           //get the 1st moments for populations at the current state. 
+//           AthenaArray<Real> M1_array;
+//           M1_array.NewAthenaArray(N_P);
+//           M1_array(0) = rho_sil_small;
+//           M1_array(1) = rho_sil_big;
+//
+//           // The 1st moments should be conserved (mass conservation)
+//           Real M1_relax = M1_array(0) + M1_array(1);
+//
+//           //get the distribution of the relaxation state: f*(m) = c* m^(-11/6) (assume the relaxed state is the MRN distribution)
+//           Real c_relax = M1_relax/6/(std::pow(m_max, 1.0/6.0) - std::pow(mmin,1.0/6.0));
+//           Real M2_relax = c_relax*6/7*(std::pow(m_max, 7.0/6.0) - std::pow(mmin,7.0/6.0)); // the 2nd moment of the relaxed state 
+//
+//           // the division mass 
+//           Real m_01 = std::pow(mmin*m_max, 0.5); 
+//
+//           // the relaxed moments for populations 
+//           AthenaArray<Real> M1_relax_array, M2_relax_array;
+//           M1_relax_array.NewAthenaArray(N_P);
+//           M2_relax_array.NewAthenaArray(N_P);
+//           M1_relax_array(0) =c_relax*6*(std::pow(m_01, 1.0/6.0) - std::pow(mmin, 1.0/6.0)); 
+//           M1_relax_array(1) = M1_relax - M1_relax_array(0);  
+//           M2_relax_array(0) = c_relax*6/7*(std::pow(m_01, 7.0/6.0) - std::pow(mmin, 7.0/6.0));
+//           M2_relax_array(1) = M2_relax - M2_relax_array(0);
+//
+//           //from the moments we get the relaxed state distribution. 
+//           AthenaArray<Real> rho_relax_array, n_relax_array;
+//           rho_relax_array.NewAthenaArray(N_P);
+//           n_relax_array.NewAthenaArray(N_P);
+//
+//           rho_relax_array(0) = M1_relax_array(0);
+//           rho_relax_array(1) = M1_relax_array(1);
+//
+//           n_relax_array(0) = SQR(M1_relax_array(0))/M2_relax_array(0);
+//           n_relax_array(1) = SQR(M1_relax_array(1))/M2_relax_array(1);
+//
+//           //divide the relaxed state velues according to composition 
+//           // relaxation timescale: the collisional timescale. 
+//           Real t_stop = pmb->pdustfluids->stopping_time_array(1, k, j, i);
+//           Real St1 = t_stop*OmegaK;
+//           Real delV = std::sqrt(3*alpha_vis*St1*cs2); // relative velocity between the two populations, using the turbulent relative velocity for simplicity.
+//
+//           //// Here we use volumn number density rather than the column number density 
+//           Real rho_Np_vol = cons_df(4*4,k,j,i)/std::sqrt(2*PI)/H_gas; // the bulk number density of pebbles, using the number density of the big population as a proxy.
+//           Real t_relax = 1.0/(4*rho_Np_vol *PI*SQR(s_p_array(1)) * delV )*10000.;
+//
+//           //relax the current state to the relaxed state: 
+//           Real relax_rate = dt/t_relax;
+//           Real rho_sil_small_new = rho_sil_small + relax_rate*(rho_relax_array(0) - rho_sil_small);
+//           Real rho_sil_big_new   = rho_sil_big   + relax_rate*(rho_relax_array(1) - rho_sil_big  );
+//
+//           Real n_small = cons_df(4*3, k, j, i); // the number density of the small population before relaxation 
+//           Real n_big = cons_df(4*4, k, j, i); 
+//
+//           Real n_small_new = n_small + relax_rate*(n_relax_array(0) - n_small);
+//           Real n_big_new = n_big + relax_rate*(n_relax_array(1) - n_big);
+//           // Real n_small_new = rho_Np_array(0, k,j,i) + relax_rate*(n_relax_array(0) - rho_Np_array(0, k,j,i));  
+//           // Real n_big_new   = rho_Np_array(1, k,j,i) + relax_rate*(n_relax_array(1) - rho_Np_array(1, k,j,i));
+//
+//           // new characteristic mass 
+//           Real m_small_new = (rho_sil_small_new)/n_small_new; 
+//           Real m_big_new = (rho_sil_big_new)/n_big_new;
+//
+//           // if (i ==2){
+//           // std::cout << rho_Np_array(1, k,j,i) << " -> " << n_big_new << std::endl;
+//           // std::cout << m_p_array(1,k,j,i) << " -> " << m_big_new << std::endl;
+//           // std::cout << rho_sil_big << " -> " << rho_sil_big_new << std::endl;
+//           // }
+//
+//           //assign the new values to the simulation: 
+//           cons_df(4*0, k, j, i) = std::fmax(rho_sil_small_new, dffloor_); // avoid negative density after relaxation 
+//           cons_df(4*1, k, j, i) = std::fmax(rho_sil_big_new, dffloor_);
+//           cons_df(4*3, k, j, i) = std::fmax(n_small_new, dffloor_); //number density 
+//           cons_df(4*4, k, j, i) = std::fmax(n_big_new, dffloor_);
+//
+//           //update the pebble mass array 
+//           m_p_array(0,k,j,i) = m_small_new;
+//           m_p_array(1,k,j,i) = m_big_new;
+//           // rho_Np_array(0, k,j,i) = n_small_new;
+//           // rho_Np_array(1, k,j,i) = n_big_new;
+//
+//           //update the momentum accordingly
+//           cons_df(4*0+1, k, j, i) = cons_df(4*0, k, j, i) * v1_sil_small;
+//           cons_df(4*0+2, k, j, i) = cons_df(4*0, k, j, i) * v2_sil_small;
+//           cons_df(4*0+3, k, j, i) = cons_df(4*0, k, j, i) * v3_sil_small; 
+//
+//           cons_df(4*1+1, k, j, i) = cons_df(4*1, k, j, i) * v1_sil_big;
+//           cons_df(4*1+2, k, j, i) = cons_df(4*1, k, j, i) * v2_sil_big;
+//           cons_df(4*1+3, k, j, i) = cons_df(4*1, k, j, i) * v3_sil_big;
+//
+//           // std::cout << "after Cell (" << k << "," << j << "," << i << "): " << std::endl;
+//           // std::cout << "rho_sil_small = " << rho_sil_small << ", v_sil_small = (" << v1_sil_small << "," << v2_sil_small << "," << v3_sil_small << ")" << std::endl;
+//           // std::cout << "cons_rho_sil_small = " << cons_df(4*0, k, j, i) << std::endl;
+//           // std::cout << "cons_v1_sil_small = " << cons_df(4*0+1, k, j, i) << std::endl;
+//           // std::cout << "cons_v2_sil_small = " << cons_df(4*0+2, k, j, i) << std::endl;
+//           // if (time > 0.0){
+//           //   std::cout << "v1_sil_small=" << v1_sil_small << ", v1_sil_big=" << v1_sil_big << std::endl;
+//           // if (std::isnan(v1_sil_small) || std::isnan(v1_sil_big)){
+//           //   std::cout << "v1_sil_small=" << v1_sil_small << ", v1_sil_big=" << v1_sil_big << std::endl;
+//           // }
+//           // }
 //
 //
+//           //compare the powerlaw index before and after the relaxation
+//           Real q_after = std::log((rho_sil_big_new)/(rho_sil_small_new))/std::log(m_big_new/m_small_new); // the effective powerlaw index of the relaxed state
 //
-//         //compare the powerlaw index before and after the relaxation
-//         Real q_after = std::log((rho_ice_big_new+rho_sil_big_new)/(rho_ice_small_new+rho_sil_small_new))/std::log(m_big_new/m_small_new); // the effective powerlaw index of the relaxed state
-//         // std::cout << "Effective powerlaw index before relaxation: " << q_before << std::endl;
-//         // std::cout << "Effective powerlaw index after relaxation: " << q_after << std::endl;
+//           if ((q_after-1.0/6.0)/(q_before-1.0/6.0)<0.0){
+//             std::cout << "overshoot" << std::endl;
+//           }
+//
+//           //check mass conservation 
+//           Real mass_before = rho_sil_small + rho_sil_big;
+//           Real mass_after = rho_sil_small_new + rho_sil_big_new;
+//           if (std::abs(mass_after - mass_before)/mass_before > 1.e-10){
+//             std::cout << "### WARNING: Mass not conserved during relaxation at cell (" << k << "," << j << "," << i << ")" << std::endl;
+//             std::cout << "Mass before relaxation: " << mass_before << std::endl;
+//             std::cout << "Mass after relaxation: " << mass_after << std::endl;
+//           }
+//
+//         } else{
+//           //still update the rho_Np_array.
+//
+//           // std::cout << "No relaxation needed at cell (" << k << "," << j << "," << i << ")" << std::endl;
+//         }
+//           // std::cout << "Effective powerlaw index before relaxation: " << q_before << std::endl;
+//           // std::cout << "Effective powerlaw index after relaxation: " << q_after << std::endl;
 //
 //
-//         //check the quantities changed by the relaxation process:
-//         // std::cout << "Relaxation at cell (" << k << "," << j << "," << i << "): " << std::endl;
-//         // std::cout << "c_relax: " << c_relax << std::endl;
-//         // std::cout << "rho_ice_small: " << rho_ice_small << " -> " << rho_ice_small_new << std::endl;
-//         // std::cout << "rho_sil_small: " << rho_sil_small << " -> " << rho_sil_small_new << std::endl;
-//         // std::cout << "rho_ice_big: " << rho_ice_big << " -> " << rho_ice_big_new << std::endl;
-//         // std::cout << "rho_sil_big: " << rho_sil_big << " -> " << rho_sil_big_new << std::endl;
-//         // std::cout << "n_small: " << rho_Np_array(0, k,j,i) << " -> " << n_small_new << std::endl;
-//         // std::cout << "n_big: " << rho_Np_array(1, k,j,i) << " -> " << n_big_new << std::endl;
-//         // std::cout << "t_relax: " << t_relax << std::endl;
-//         // std::cout << "relax_rate: " << relax_rate << std::endl;
-//         // std::cout << "m_max: " << m_max << std::endl;
+//           //check the quantities changed by the relaxation process:
+//           // std::cout << "Relaxation at cell (" << k << "," << j << "," << i << "): " << std::endl;
+//           // std::cout << "c_relax: " << c_relax << std::endl;
+//           // std::cout << "rho_ice_small: " << rho_ice_small << " -> " << rho_ice_small_new << std::endl;
+//           // std::cout << "rho_sil_small: " << rho_sil_small << " -> " << rho_sil_small_new << std::endl;
+//           // std::cout << "rho_ice_big: " << rho_ice_big << " -> " << rho_ice_big_new << std::endl;
+//           // std::cout << "rho_sil_big: " << rho_sil_big << " -> " << rho_sil_big_new << std::endl;
+//           // std::cout << "n_small: " << rho_Np_array(0, k,j,i) << " -> " << n_small_new << std::endl;
+//           // std::cout << "n_big: " << rho_Np_array(1, k,j,i) << " -> " << n_big_new << std::endl;
+//           // std::cout << "t_relax: " << t_relax << std::endl;
+//           // std::cout << "relax_rate: " << relax_rate << std::endl;
+//           // std::cout << "m_max: " << m_max << std::endl;
 //
 //
 //        }
 //      }
 //   }
 // }
+
+Real PhaseChange::Tem_gas(const Real rad){
+    return Tem0*std::pow(rad/r0, Tslope);
+}
+
+// a general version
+void PhaseChange::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt, const Real gm0, const Real alpha_vis,
+      const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
+      const AthenaArray<Real> &prim_s, const AthenaArray<Real> &bcc,
+      AthenaArray<Real> &cons, AthenaArray<Real> &cons_df, AthenaArray<Real> &cons_s, AthenaArray<Real> &v_frag){
+
+  for (int k=pmb->ks; k<=pmb->ke; ++k) {
+    for (int j=pmb->js; j<=pmb->je; ++j) {
+#pragma omp simd
+      for (int i=pmb->is; i<=pmb->ie; ++i) {
+        AthenaArray<Real> rhos, v1s, v2s, v3s, ns; 
+        int NFLUIDS = NDUSTFLUIDS-1-N_P; // exclude vapor and number density
+        rhos.NewAthenaArray(NFLUIDS); // exclude vapor and number density 
+        v1s.NewAthenaArray(NFLUIDS);
+        v2s.NewAthenaArray(NFLUIDS);
+        v3s.NewAthenaArray(NFLUIDS);
+        ns.NewAthenaArray(NFLUIDS);
+
+        Real rho_sil = 0.0;
+        Real rho_ice = 0.0;
+
+        for (int n=0; n<NFLUIDS; ++n){
+          rhos(n) = cons_df(4*n, k, j, i);
+
+          if (n%N_Z == 1 || N_Z==1){ // if it's a silicate population (or if there's only one population which is silicate)
+            rho_sil += rhos(n);
+          }else if (n%N_Z == 0){
+            rho_ice += rhos(n);
+          }
+          // if (rhos(n) <= dffloor_){
+          //   continue; // skip if the density is too low
+          // }
+          v1s(n) = cons_df(4*n+1, k, j, i)/rhos(n);
+          v2s(n) = cons_df(4*n+2, k, j, i)/rhos(n);
+          v3s(n) = cons_df(4*n+3, k, j, i)/rhos(n);
+
+          int n_id = N_Z*N_P + 1 + n/N_Z; 
+          ns(n) = cons_df(4*n_id, k, j, i); // number density for this population
+        }
+
+        // get the maximum mass 
+        Real rad = pmb->pcoord->x1v(i); 
+        Real Tem = Tem_gas(rad); // [code_temperature]
+
+        Real sigma_g = cons(IDN, k, j, i);
+        Real sigma_v = cons_df(4*vapor_id, k, j, i);
+
+        Real OmegaK = std::sqrt(gm0/std::pow(rad, 3));
+
+        Real fv = sigma_v/sigma_g;
+        Real cs2 = Tem/KELVIN*Get_mu(fv);
+
+        Real H_gas = std::sqrt(cs2)/OmegaK;
+        
+        Real rho_g = sigma_g/(std::sqrt(2*PI)*H_gas);
+
+        Real v_frag_tot =v_frag(1);
+
+        Real vth = std::sqrt(8.0/PI)*std::sqrt(cs2); // [code_velocity] 
+
+        // get internal density 
+        Real rho_inte_relax = (rho_sil_inter_*rho_sil + rho_ice_inter_*rho_ice)/(rho_sil + rho_ice); // the internal density of the relaxed state, using the current composition as a proxy.
+        //too small, for the moment artificially enlarge it
+        Real s_max =SQR(v_frag_tot)/cs2 * rho_g*vth/3/alpha_vis/OmegaK/rho_inte_relax*5.e2;
+
+        Real m_max = FOUR_3RD*PI*SQR(s_max)*s_max*rho_inte_relax; // [code_mass]
+        //store the mmax 
+        mmax_array(k,j,i) = m_max;
+
+        AthenaArray<Real> rho_comps, s_p_array;
+        s_p_array.NewAthenaArray(N_P);
+        for (int p = 0; p < N_P; ++p) {
+          s_p_array(p) = std::pow(m_p_array(p,k,j,i)/(FOUR_3RD*PI*rho_inte_relax), ONE_3RD); // [code_length]
+        }
+
+        // calculate the power law before relaxation 
+        AthenaArray<Real> rho_pop_array;
+        rho_pop_array.NewAthenaArray(N_P);
+        for (int p = 0; p < N_P; ++p) {
+          for (int zi = 0; zi < N_Z; ++zi) {
+            int dust_id = N_Z*p + zi; 
+            rho_pop_array(p) += cons_df(4*dust_id, k, j, i); // total density for population p
+          }
+        }
+
+        Real q_before = std::log((rho_pop_array(1))/(rho_pop_array(0)))/std::log(m_p_array(1,k,j,i)/m_p_array(0,k,j,i)); // the effective powerlaw index of the current state
+
+        if (std::abs(q_before - 1.0/6.0)/1.0*6.0 > 1.e-6) {
+          Real M1_relax = 0.0;
+          for (int p = 0; p < N_P; ++p) {
+            M1_relax += rho_pop_array(p);
+          }
+
+          AthenaArray<Real> comp_ratio;
+          comp_ratio.NewAthenaArray(N_Z);
+          if (N_Z == 1){
+            comp_ratio(0) = 1.0;
+          } else {
+            comp_ratio(0) = rho_ice/(rho_ice + rho_sil);
+            comp_ratio(1) = 1.0 - comp_ratio(0); 
+          }
+          
+          //get the distribution of the relaxation state: f*(m) = c* m^(-11/6) (assume the relaxed state is the MRN distribution)
+          Real c_relax = M1_relax/6/(std::pow(m_max, 1.0/6.0) - std::pow(mmin,1.0/6.0));
+          Real M2_relax = c_relax*6/7*(std::pow(m_max, 7.0/6.0) - std::pow(mmin,7.0/6.0)); // the 2nd moment of the relaxed state 
+
+          // the division mass 
+          Real m_01 = std::pow(mmin*m_max, 0.5); 
+
+          AthenaArray<Real> M1_relax_array, M2_relax_array;
+          M1_relax_array.NewAthenaArray(N_P);
+          M2_relax_array.NewAthenaArray(N_P);
+          M1_relax_array(0) =c_relax*6*(std::pow(m_01, 1.0/6.0) - std::pow(mmin, 1.0/6.0)); 
+          M1_relax_array(1) = M1_relax - M1_relax_array(0);  
+          M2_relax_array(0) = c_relax*6/7*(std::pow(m_01, 7.0/6.0) - std::pow(mmin, 7.0/6.0));
+          M2_relax_array(1) = M2_relax - M2_relax_array(0);
+
+          //from the moments we get the relaxed state per population.
+          AthenaArray<Real> rho_pop_relax, n_relax_array, rho_relax_array;
+          rho_pop_relax.NewAthenaArray(N_P);
+          n_relax_array.NewAthenaArray(N_P);
+          rho_relax_array.NewAthenaArray(NFLUIDS);
+
+          for (int p = 0; p < N_P; ++p) {
+            rho_pop_relax(p) = M1_relax_array(p);
+            n_relax_array(p) = SQR(M1_relax_array(p))/M2_relax_array(p);
+            
+            // divide the relaxed state into different compositions according to the current composition ratio of each population.
+            for (int zi=0; zi<N_Z; ++zi){
+              int dust_id = N_Z*p + zi;
+              rho_relax_array(dust_id) = rho_pop_relax(p)*comp_ratio(zi);
+            }
+          }
+
+          //get the relaxation timescale: the collisional timescale of large population.
+          Real t_stop = pmb->pdustfluids->stopping_time_array(N_P-1, k, j, i);
+          Real St1 = t_stop*OmegaK;
+          Real delV = std::sqrt(3*alpha_vis*St1*cs2); // relative velocity between the two populations, using the turbulent relative velocity for simplicity.
+
+          //// Here we use volumn number density rather than the column number density 
+          int n_large_id = NDUSTFLUIDS - 1;
+          Real rho_Np_vol = cons_df(4*n_large_id,k,j,i)/std::sqrt(2*PI)/H_gas; // the bulk number density of pebbles, using the number density of the big population as a proxy.
+          Real t_relax = 1.0/(4*rho_Np_vol *PI*SQR(s_p_array(1)) * delV );
+
+          //relax the current state to the relaxed state:
+          Real relax_rate = dt/t_relax;
+
+          AthenaArray<Real> ns_new; 
+          ns_new.NewAthenaArray(N_P);
+          for (int p=0; p<N_P; ++p){
+            for (int zi=0; zi<N_Z; ++zi){
+              int dust_id = N_Z*p + zi;
+              Real rho_new = rhos(dust_id) + relax_rate*(rho_relax_array(dust_id) - rhos(dust_id));
+
+              cons_df(4*dust_id, k, j, i) = std::fmax(rho_new, dffloor_); // avoid negative density after relaxation 
+              cons_df(4*dust_id+1, k, j, i) = cons_df(4*dust_id, k, j, i) * v1s(dust_id);
+              cons_df(4*dust_id+2, k, j, i) = cons_df(4*dust_id, k, j, i) * v2s(dust_id);
+              cons_df(4*dust_id+3, k, j, i) = cons_df(4*dust_id, k, j, i) * v3s(dust_id);
+            }
+
+            int n_id = N_Z*N_P + 1 + p;
+            ns_new(p)= ns(p) + relax_rate*(n_relax_array(p) - ns(p));
+            cons_df(4*n_id, k, j, i) = std::fmax(ns_new(p), dffloor_); // number density
+          }
+
+          //calculate the power law after relaxation for checking
+          AthenaArray<Real> rho_pop_new, m_p_new;
+          rho_pop_new.NewAthenaArray(N_P);
+          m_p_new.NewAthenaArray(N_P);
+          for (int p = 0; p < N_P; ++p) {
+            for (int zi = 0; zi < N_Z; ++zi) {
+              int dust_id = N_Z*p + zi; 
+              rho_pop_new(p) += cons_df(4*dust_id, k, j, i); // total density for population p
+            }
+
+            m_p_new(p) = rho_pop_new(p)/ns_new(p); // new characteristic mass for population p
+          }
+
+          Real q_after = std::log((rho_pop_new(1))/(rho_pop_new(0)))/std::log(m_p_new(1)/m_p_new(0)); // the effective powerlaw index of the relaxed state
+
+          if ((q_after-1.0/6.0)/(q_before-1.0/6.0)<0.0){
+            std::cout << "overshoot" << std::endl;
+          }
+
+          Real mass_before = rho_pop_array(0) + rho_pop_array(1);
+          Real mass_after = rho_pop_new(0) + rho_pop_new(1);
+
+          if (std::abs(mass_after - mass_before)/mass_before > 1.e-10){
+            std::cout << "### WARNING: Mass not conserved during relaxation at cell (" << k << "," << j << "," << i << ")" << std::endl;
+            std::cout << "Mass before relaxation: " << mass_before << std::endl;
+            std::cout << "Mass after relaxation: " << mass_after << std::endl;
+          }
+
+        }
+      }
+    }
+  }
+}
