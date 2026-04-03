@@ -64,7 +64,7 @@ PhaseChange::PhaseChange(MeshBlock *pmb, ParameterInput *pin):
   // Initialize problem-specific constants from ParameterInput
   Units *punit = pmb->pmy_mesh->punit;
   
-  min_tol_ = pin->GetOrAddReal("problem", "min_tol", 1.e-7);
+  min_tol_ = pin->GetOrAddReal("problem", "min_tol", 1.e-10);
   
   // (Yu, 2025-11-18) Convert input parameters from CGS to code units
   for (int p = 0; p < N_P; ++p) {
@@ -85,7 +85,7 @@ PhaseChange::PhaseChange(MeshBlock *pmb, ParameterInput *pin):
   L_heat = L_heat_cgs / SQR(punit->code_velocity_cgs); // erg/g
   P_eq0 = P_eq0_cgs / punit->code_pressure_cgs;
   Cd_water = Cd_water_cgs / (SQR(punit->code_velocity_cgs)); // (Yu) erg/g/K, need to check.
-  // KELVIN = SQR(punit->code_velocity_cgs) / (Constants::k_boltzmann_cgs / Constants::hydrogen_mass_cgs);
+  KELVIN = SQR(punit->code_velocity_cgs) / (Constants::k_boltzmann_cgs / Constants::hydrogen_mass_cgs);
 }
 
 //----------------------------------------------------------------------------------------
@@ -174,12 +174,23 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
         Real fv = rho_v/rho_g;
         Real fv0 = fv;
 
-        // Check for NaN
+        // Check for invalid phase-change inputs and print the failing cell location.
         if(std::isnan(fv) || (fv < 0.0) || std::isnan(gas_mom1) || std::isnan(gas_erg)){
+          Real x1 = pmb->pcoord->x1v(i);
+          Real x2 = pmb->pcoord->x2v(j);
+          Real x3 = pmb->pcoord->x3v(k);
           std::stringstream msg;
           msg << "### FATAL ERROR in PhaseChange::PhaseChangeSource" << std::endl
-              << "NaN detected: fv = " << fv << ", gas_mom1 = " << gas_mom1
-              << ", gas_erg = " << gas_erg << std::endl;
+              << "Invalid state before phase change" << std::endl
+              << "time = " << time << ", dt = " << dt
+              << ", gid = " << pmb->gid
+              << ", cell(k,j,i) = (" << k << ", " << j << ", " << i << ")"
+              << std::endl
+              << "x = (" << x1 << ", " << x2 << ", " << x3 << ")" << std::endl
+              << "rho_g = " << rho_g << ", rho_v = " << rho_v
+              << ", fv = " << fv << std::endl
+              << "gas_mom = (" << gas_mom1 << ", " << gas_mom2 << ", " << gas_mom3
+              << "), gas_erg = " << gas_erg << std::endl;
           std::cerr << msg.str();
           std::exit(EXIT_FAILURE);
         }
@@ -283,11 +294,15 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
           }
         }
 
+        // Apply the same positivity bounds to the initial supply-limited step.
+        // This only reduces the attempted exchange; it never flips its direction.
+        Real drho_step = ClampDrhoAdpToMassFloors(drho_limit * sign, rho_g, rho_v,
+                                                  rho_d_array, drho_d_ratio_array);
         // update gas, vapor, and dust with total supply
-        rho_g1 = rho_g + drho_limit * sign;
-        rho_v1 = rho_v + drho_limit * sign;
+        rho_g1 = rho_g + drho_step;
+        rho_v1 = rho_v + drho_step;
         for (int p = 0; p < N_P; ++p) {
-          rho_d_array1(p) = rho_d_array(p) - drho_limit*sign*drho_d_ratio_array(p);
+          rho_d_array1(p) = rho_d_array(p) - drho_step*drho_d_ratio_array(p);
         }
         ////////////////////////////////////////////////////////////////
         
@@ -337,10 +352,14 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
               break;
             }
 
+            // Keep rho_v, rho_g, and ice >= floors (bounded root update)
+            drho_adp = ClampDrhoAdpToMassFloors(drho_adp, rho_g, rho_v, rho_d_array,
+                                                drho_d_ratio_array);
+
             x2 = x1 + drho_adp;
             rho_g1 = rho_g + drho_adp;
             rho_v1 = rho_v + drho_adp;
-            
+
             for (int p = 0; p < N_P; ++p) {
               rho_d_array1(p) = rho_d_array(p) - drho_adp*drho_d_ratio_array(p);
             }
@@ -385,10 +404,12 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
               
               rho_mid = (rho_left + rho_right)/2.0;
               drho_adp = rho_mid - rho_v;
+              drho_adp = ClampDrhoAdpToMassFloors(drho_adp, rho_g, rho_v, rho_d_array,
+                                                  drho_d_ratio_array);
 
               rho_g1 = rho_g + drho_adp;
               rho_v1 = rho_v + drho_adp;
-              
+
               for (int p = 0; p < N_P; ++p) {
                 rho_d_array1(p) = rho_d_array(p) - drho_adp*drho_d_ratio_array(p);
               }
@@ -456,6 +477,43 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
       }
     }
   }
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn Real PhaseChange::ClampDrhoAdpToMassFloors(...)
+//! \brief Bound phase-change correction step so densities stay above floors.
+//!
+//! During secant/bisection, updates are rho_g1=rho_g+dp, rho_v1=rho_v+dp,
+//! rho_d1=rho_d-dp*ratio_p. This only limits the attempted step magnitude so
+//! rho_v1>=dffloor_, rho_g1>=dfloor_, and rho_d1(p)>=dffloor_ for ice species
+//! with ratio_p>0. It never changes the sign of dp.
+
+Real PhaseChange::ClampDrhoAdpToMassFloors(Real drho_adp, Real rho_g, Real rho_v,
+    const AthenaArray<Real> &rho_d_array,
+    const AthenaArray<Real> &drho_d_ratio_array) const {
+  const Real r_eps = static_cast<Real>(1.0e-20);
+  Real drho_lo = std::max(dffloor_ - rho_v, dfloor_ - rho_g);
+  Real drho_hi = HUGE_VAL;
+  for (int p = 0; p < N_P; ++p) {
+    const Real r = drho_d_ratio_array(p);
+    if (r > r_eps) {
+      const Real cap = (rho_d_array(p) - dffloor_) / r;
+      drho_hi = (cap < drho_hi) ? cap : drho_hi;
+    }
+  }
+  if (drho_adp > 0.0) {
+    // Sublimation: only the ice floor can reduce a positive step.
+    if (drho_hi <= 0.0) return 0.0;
+    if (drho_adp > drho_hi) return drho_hi;
+    return drho_adp;
+  }
+  if (drho_adp < 0.0) {
+    // Condensation: only gas/vapor floors can reduce a negative step.
+    if (drho_lo >= 0.0) return 0.0;
+    if (drho_adp < drho_lo) return drho_lo;
+    return drho_adp;
+  }
+  return drho_adp;
 }
 
 //----------------------------------------------------------------------------------------

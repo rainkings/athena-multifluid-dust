@@ -67,9 +67,10 @@ void DustFluidsDiffusion::DustFluidsConcentrationDiffusiveFlux(const AthenaArray
           //Real dw_df_dx1 = (w_df(rho_id, k, j, i)/(w_df(rho_id, k, j, i) + w(IDN, k, j, i)) - w_df(rho_id, k, j, i-1)/(w_df(rho_id, k, j, i-1) + w(IDN, k, j, i-1)))
                                       ///pco_->dx1v(i-1);
           //x1flux(rho_id, k, j, i) -= nu_face*rho_face*dw_df_dx1;
-          if(FLX_COR and (i >= ie) and (pmb_->pbval->block_bcs[BoundaryFace::outer_x1] == BoundaryFlag::user)){
-            x1flux(rho_id,k,j,i) += nu_face*gas_rho_face*dw_df_dx1;
-          }
+          // added by Yu, avoid the artificial diffusion at the outer boundary
+          // if(FLX_COR and (i >= ie) and (pmb_->pbval->block_bcs[BoundaryFace::outer_x1] == BoundaryFlag::user)){
+          //   x1flux(rho_id,k,j,i) += nu_face*gas_rho_face*dw_df_dx1;
+          // }
         }
       }
     }

@@ -121,7 +121,13 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
         if (pmb->pbval->block_bcs[BoundaryFace::outer_x1] == BoundaryFlag::user) {
           for (int n=0; n<N_P*N_Z; n++) { // exclude vapor
             int rho_id = 4*n;
+            int v1_id = 4*n + 1;
+            int v2_id = 4*n + 2;
+            int v3_id = 4*n + 3;
             x1flux(rho_id,k,j,ie+1) = inflx_dust_x1(n,k,j,0); // inflx of dustfluids
+            x1flux(v1_id,k,j,ie+1) = inflx_dust_x1(n,k,j,0) * pmb->pdustfluids->df_w(v1_id,k,j,ie+1);
+            x1flux(v2_id,k,j,ie+1) = inflx_dust_x1(n,k,j,0) * pmb->pdustfluids->df_w(v2_id,k,j,ie+1);
+            x1flux(v3_id,k,j,ie+1) = inflx_dust_x1(n,k,j,0) * pmb->pdustfluids->df_w(v3_id,k,j,ie+1);
           }
         }
       } // end if(FLX_COR)

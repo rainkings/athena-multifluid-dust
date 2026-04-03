@@ -118,9 +118,9 @@ void Hydro::CalculateFluxes(AthenaArray<Real> &w, FaceField &b,
       RiemannSolver(k, j, is, ie+1, IVX, wl_, wr_, x1flux, dxw_);
       if(FLX_COR) {
         // Only apply flux correction at outer boundary of simulation domain
-        if (pmb->pbval->block_bcs[BoundaryFace::outer_x1] == BoundaryFlag::user) {
-          x1flux(IDN,k,j,ie+1) = inflx_x1(k,j,0); // inflx of hydro
-        }
+        // if (pmb->pbval->block_bcs[BoundaryFace::outer_x1] == BoundaryFlag::user) {
+        //   x1flux(IDN,k,j,ie+1) = inflx_x1(k,j,0); // inflx of hydro
+        // }
       }
 #else  // MHD:
       // x1flux(IBY) = (v1*b2 - v2*b1) = -EMFZ

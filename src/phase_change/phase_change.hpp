@@ -53,6 +53,7 @@ class PhaseChange {
   AthenaArray<Real> q_diff;      // heat conduction rate [code unit]
 
   Real L_heat, Cd_water, P_eq0;
+  Real KELVIN;  //!< Temperature conversion factor computed from units [code_velocity^2 / (k_b/m_p)]
 
   // Public functions
   void PhaseChangeSource(MeshBlock *pmb, const Real time, const Real dt,
@@ -91,6 +92,10 @@ class PhaseChange {
                    Real rho_v, Real &drho);
   Real GetSublimationRate(Real Tem, Real rho_v, 
                           Real s_p, Real rho_Np_p);
+  //! Clamp exchange increment so rho_v>=dffloor_, rho_g>=dfloor_, ice>=dffloor_
+  Real ClampDrhoAdpToMassFloors(Real drho_adp, Real rho_g, Real rho_v,
+      const AthenaArray<Real> &rho_d_array,
+      const AthenaArray<Real> &drho_d_ratio_array) const;
 };
 
 #endif // PHASE_CHANGE_PHASE_CHANGE_HPP_

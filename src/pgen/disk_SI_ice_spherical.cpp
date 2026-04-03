@@ -44,7 +44,6 @@
 #endif
 
 namespace {
-
 void GetCylCoordInSpherical(Coordinates *pco, Real &rad, Real &phi, Real &z,
                             int i, int j, int k);
 Real PoverRho(const Real rad, const Real phi, const Real z);
@@ -68,7 +67,8 @@ x1min, x1max, x2min, x2max, damping_rate, radius_inner_damping, radius_outer_dam
 theta_upper_damping, theta_lower_damping, upper_altitude_damping, lower_altitude_damping,
 inner_ratio_region, outer_ratio_region, inner_width_damping, outer_width_damping,
 prev_time, curr_time, next_time, edt, threshold_ratio, derefine_ratio;
-Real f_ICE_inter0;
+Real f_ICE_inter0, M_dot_ice_const;
+Real KELVIN;
 
 bool Dust_Supply_Flag, Inner_Gas_Damping_Flag, Outer_Gas_Damping_Flag, Theta_Gas_Damping_Flag,
 Inner_Dust_Damping_Flag, Outer_Dust_Damping_Flag, Isothermal_Flag, RadiativeConduction_Flag;
@@ -98,6 +98,9 @@ void MyDustDiffusivity(DustFluids *pdf, MeshBlock *pmb,
       const AthenaArray<Real> &stopping_time,
       AthenaArray<Real> &nu_dust, AthenaArray<Real> &cs_dust,
       int is, int ie, int js, int je, int ks, int ke);
+void MyVisc(HydroDiffusion *phdif, MeshBlock *pmb,
+            const  AthenaArray<Real> &w, const AthenaArray<Real> &bc,
+            int is, int ie, int js, int je, int ks, int ke);
 // User-defined condutivity
 void RadiativeCondution(HydroDiffusion *phdif, MeshBlock *pmb,
     const AthenaArray<Real> &w, const AthenaArray<Real> &bc,
@@ -113,6 +116,7 @@ void Vr_Mdot(const Real r_ac, const Real r_gh, const Real rho_ac,
              const Real rho_gh, const Real vr_ac, Real &vr_gh);
 
 Real MyMeshSpacingX1(Real x, RegionSize rs);
+Real CompressedX2(Real x, RegionSize rs);
 }
 // namespace
 
@@ -172,6 +176,9 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   std::string basename;
   basename = pin->GetString("job", "problem_id");
 
+  KELVIN = SQR(punit->code_velocity_cgs)
+           / (Constants::k_boltzmann_cgs / Constants::hydrogen_mass_cgs);
+
   // Get parameters for gravitatonal potential of central point mass
   gm0 = pin->GetOrAddReal("problem", "GM", 0.0);
   r0  = pin->GetOrAddReal("problem", "r0", 1.0);
@@ -186,6 +193,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   Outer_Dust_Damping_Flag  = pin->GetOrAddBoolean("problem", "Outer_Dust_Damping_Flag",  false);
   Dust_Supply_Flag         = pin->GetOrAddBoolean("problem", "Dust_Supply_Flag", true);
   f_ICE_inter0             = pin->GetOrAddReal("problem", "f_ICE_inter0", 0.5);
+  M_dot_ice_const          = pin->GetOrAddReal("problem", "M_dot_ice_const", 0.0);
 
   // Get parameters for initial density and velocity
   rho0   = pin->GetReal("problem", "rho0");
@@ -297,6 +305,10 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   if (pin->GetOrAddReal("mesh", "x1rat", 1.0) < 0.0){
     EnrollUserMeshGenerator(X1DIR, MyMeshSpacingX1);
   }
+  // Enroll userdef mesh, x2
+  if (pin->GetReal("mesh","x2rat") < 0.0){
+    EnrollUserMeshGenerator(X2DIR, CompressedX2);
+  }
 
   // enroll user-defined boundary condition
   if (mesh_bcs[BoundaryFace::inner_x1] == GetBoundaryFlag("user")) {
@@ -323,6 +335,10 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
     msg << "The boundary condition in x3 direction must be periodic!" << std::endl;
     ATHENA_ERROR(msg);
   }
+
+  // enroll viscosity
+  Real nu = pin->GetOrAddReal("problem","alpha_vis",0.0);
+  if (nu!=0.0) EnrollViscosityCoefficient(MyVisc);
 
   if (NDUSTFLUIDS > 0) {
     // Enroll user-defined dust stopping time
@@ -357,12 +373,10 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
 
 void MeshBlock::InitUserMeshBlockData(ParameterInput *pin) {
 
-  AllocateUserOutputVariables(1 + N_P);
-  SetUserOutputVariableName(0, "sound_speed");
-  for (int p=0; p<N_P; ++p) {
-    dust_ratio_names[p] = "dust_ratio_" + std::to_string(p+1);
-    SetUserOutputVariableName(p+1, dust_ratio_names[p].c_str());
-  }
+  AllocateUserOutputVariables(2);
+  SetUserOutputVariableName(0, "st");
+  SetUserOutputVariableName(1, "dif");
+  
 
   AllocateRealUserMeshBlockDataField(3);
   Real orb_defined;
@@ -410,7 +424,7 @@ void MeshBlock::InitUserMeshBlockData(ParameterInput *pin) {
 void MeshBlock::ProblemGenerator(ParameterInput *pin) {
 
   std::int64_t iseed = -1 - gid;
-  Real gamma_gas = peos->GetGamma();
+  Real gamma_gas = peos->calc_gamma(0.0);
   Real igm1      = 1.0/(gamma_gas - 1.0);
   OrbitalVelocityFunc &vK = porb->OrbitalVelocity;
 
@@ -456,33 +470,27 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
         phydro->u(IM2, k, j, i) = den_gas*(vel_gas_theta + delta_gas_vel2);
         phydro->u(IM3, k, j, i) = den_gas*(vel_gas_phi   + delta_gas_vel3);
 
-        phydro->u(IEN, k, j, i)  = cs_square*phydro->u(IDN, k, j, i)*igm1;
-        phydro->u(IEN, k, j, i) += 0.5*(SQR(phydro->u(IM1, k, j, i))+SQR(phydro->u(IM2, k, j, i))
-                                      + SQR(phydro->u(IM3, k, j, i)))/den_gas;
-
         if (NDUSTFLUIDS > 0) {
           // initialize vapor (if present)
-          int vap_id = vapor_id;
-          if (vap_id >= 0 && vap_id < NDUSTFLUIDS) {
-            int rho_id  = 4*vap_id;
-            int v1_id   = rho_id + 1;
-            int v2_id   = rho_id + 2;
-            int v3_id   = rho_id + 3;
-            Real den_vap = DenProfileCyl_dust(rad, phi, z, initial_D2G[vap_id], Hratio[vap_id]);
-            pdustfluids->df_u(rho_id, k, j, i) = den_vap;
-            pdustfluids->df_u(v1_id,  k, j, i) = den_vap*vis_vel_r;
-            pdustfluids->df_u(v2_id,  k, j, i) = den_vap*vel_gas_theta;
-            pdustfluids->df_u(v3_id,  k, j, i) = den_vap*vel_gas_phi;
-          }
+          int vap_id = vapor_id;          
+          int rho_id  = 4*vap_id;
+          int v1_id   = rho_id + 1;
+          int v2_id   = rho_id + 2;
+          int v3_id   = rho_id + 3;
+          Real den_vap = DenProfileCyl_dust(rad, phi, z, initial_D2G[vap_id], Hratio[vap_id]);
+          pdustfluids->df_u(rho_id, k, j, i) = den_vap;
+          pdustfluids->df_u(v1_id,  k, j, i) = den_vap*phydro->u(IM1, k, j, i)/den_gas;
+          pdustfluids->df_u(v2_id,  k, j, i) = den_vap*phydro->u(IM2, k, j, i)/den_gas;
+          pdustfluids->df_u(v3_id,  k, j, i) = den_vap*phydro->u(IM3, k, j, i)/den_gas;
 
           for (int p=0; p<N_P; ++p) {
             int ice_id = GetIceDustId(p);
             int refrac_id = GetRefracDustId(p);
 
             Real vel_dust_cyl   = VelProfileCyl_NSH_rad_dust(rad, phi, z,
-                                        initial_D2G_peb[p], Stokes_number_peb[p], eta_gas);
+                                        initial_D2G[p], Stokes_number[p], eta_gas);
             Real vel_dust_phi   = vel_K_sph + VelProfileCyl_NSH_phi_dust(rad, phi, z,
-                                        initial_D2G_peb[p], Stokes_number_peb[p], eta_gas);
+                                        initial_D2G[p], Stokes_number[p], eta_gas);
             vel_dust_phi       -= orb_defined*vK(porb, x1, x2, x3);
             Real vel_dust_r     = vel_dust_cyl*std::sin(x2);
             Real vel_dust_theta = vel_dust_cyl*std::cos(x2);
@@ -494,7 +502,7 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
               int v3_id  = rho_id + 3;
 
               Real den_ratio = initial_D2G[dust_id];
-              Real den_dust  = DenProfileCyl_dust(rad, phi, z, den_ratio, Hratio_peb[p]);
+              Real den_dust  = DenProfileCyl_dust(rad, phi, z, den_ratio, Hratio[p]);
               pdustfluids->df_u(rho_id, k, j, i) = den_dust;
               pdustfluids->df_u(v1_id,  k, j, i) = den_dust*vel_dust_r;
               pdustfluids->df_u(v2_id,  k, j, i) = den_dust*vel_dust_theta;
@@ -504,6 +512,72 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
             init_component(ice_id);
             init_component(refrac_id);
           }
+        }
+
+        // initializing a vapor-equilibrium state
+        if (pphase_change != nullptr && N_Z > 0) {
+          const int vap_id = vapor_id;
+          const int vap_rho_id = 4*vap_id;
+          const int vap_v1_id = vap_rho_id + 1;
+          const int vap_v2_id = vap_rho_id + 2;
+          const int vap_v3_id = vap_rho_id + 3;
+          Real &rho_v = pdustfluids->df_u(vap_rho_id, k, j, i);
+
+          Real rho_ice_tot = 0.0;
+          AthenaArray<Real> rho_ice_init;
+          rho_ice_init.NewAthenaArray(N_P);
+          for (int p = 0; p < N_P; ++p) {
+            int ice_rho_id = 4*GetIceDustId(p);
+            rho_ice_init(p) = pdustfluids->df_u(ice_rho_id, k, j, i);
+            rho_ice_tot += rho_ice_init(p);
+          }
+
+          const Real rho_vol_tot = rho_v + rho_ice_tot;
+          if (rho_vol_tot > 0.0) {
+            const Real Tem_init = cs_square*mu_xy*KELVIN;
+            const Real P_eq = pphase_change->P_eq0*std::exp(-T_a/Tem_init);
+            const Real rho_v_eq = P_eq*mu_z*KELVIN/Tem_init;
+            const Real rho_v_floor = (rho_vol_tot > dffloor) ? dffloor : rho_vol_tot;
+            const Real rho_v_new = std::max(rho_v_floor, std::min(rho_v_eq, rho_vol_tot));
+            const Real rho_ice_tot_new = rho_vol_tot - rho_v_new;
+
+            rho_v = rho_v_new;
+            pdustfluids->df_u(vap_v1_id, k, j, i) = rho_v_new*phydro->u(IM1, k, j, i)/den_gas;
+            pdustfluids->df_u(vap_v2_id, k, j, i) = rho_v_new*phydro->u(IM2, k, j, i)/den_gas;
+            pdustfluids->df_u(vap_v3_id, k, j, i) = rho_v_new*phydro->u(IM3, k, j, i)/den_gas;
+
+            for (int p = 0; p < N_P; ++p) {
+              int ice_rho_id = 4*GetIceDustId(p);
+              int ice_v1_id = ice_rho_id + 1;
+              int ice_v2_id = ice_rho_id + 2;
+              int ice_v3_id = ice_rho_id + 3;
+
+              const Real rho_ice_old = rho_ice_init(p);
+              const Real ice_frac = (rho_ice_tot > 0.0) ? (rho_ice_old/rho_ice_tot) : 0.0;
+              const Real rho_ice_new = rho_ice_tot_new*ice_frac;
+              const Real v1_ice = (rho_ice_old > 0.0) ? pdustfluids->df_u(ice_v1_id, k, j, i)/rho_ice_old : 0.0;
+              const Real v2_ice = (rho_ice_old > 0.0) ? pdustfluids->df_u(ice_v2_id, k, j, i)/rho_ice_old : 0.0;
+              const Real v3_ice = (rho_ice_old > 0.0) ? pdustfluids->df_u(ice_v3_id, k, j, i)/rho_ice_old : 0.0;
+
+              pdustfluids->df_u(ice_rho_id, k, j, i) = rho_ice_new;
+              pdustfluids->df_u(ice_v1_id, k, j, i) = rho_ice_new*v1_ice;
+              pdustfluids->df_u(ice_v2_id, k, j, i) = rho_ice_new*v2_ice;
+              pdustfluids->df_u(ice_v3_id, k, j, i) = rho_ice_new*v3_ice;
+            }
+          }
+        }
+
+        {
+          // Initialize hydro energy using the same fv convention as PhaseChangeSource.
+          const Real rho_v = (NDUSTFLUIDS > 0) ? pdustfluids->df_u(4*vapor_id, k, j, i) : 0.0;
+          const Real fv = (den_gas > 0.0) ? (rho_v/den_gas) : 0.0;
+          const Real mu_mix = Get_mu(fv);
+          const Real gamma_mix = peos->calc_gamma(fv);
+          const Real igm1_mix = 1.0/(gamma_mix - 1.0);
+          phydro->u(IEN, k, j, i)  = cs_square*(mu_xy/mu_mix)*phydro->u(IDN, k, j, i)*igm1_mix;
+          phydro->u(IEN, k, j, i) += 0.5*(SQR(phydro->u(IM1, k, j, i)) +
+                                          SQR(phydro->u(IM2, k, j, i)) +
+                                          SQR(phydro->u(IM3, k, j, i)))/den_gas;
         }
 
         if (pphase_change != nullptr && N_Z > 0) {
@@ -521,6 +595,8 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
             pscalars->s(n, k, j, i) = DenProfileCyl_dust(rad, phi, z, 1., 0.1);
           }
         }
+
+
       }
     }
   }
@@ -543,43 +619,42 @@ void MySource(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<
                                           cons, cons_df, cons_s);
   }
 
-  if ((NDUSTFLUIDS > 0) && (dust_percent_floor > 0.0))
-    DensityPercentFloor(pmb, time, dt, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s);
+  // if ((NDUSTFLUIDS > 0) && (dust_percent_floor > 0.0))
+  //   DensityPercentFloor(pmb, time, dt, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s);
 
   return;
 }
 
 
-//!\f User source term to set density percent floor
-void DensityPercentFloor(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<Real> &prim,
-    const AthenaArray<Real> &prim_df, const AthenaArray<Real> &prim_s, const AthenaArray<Real> &bcc,
-    AthenaArray<Real> &cons, AthenaArray<Real> &cons_df, AthenaArray<Real> &cons_s) {
+// //!\f User source term to set density percent floor
+// void DensityPercentFloor(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<Real> &prim,
+//     const AthenaArray<Real> &prim_df, const AthenaArray<Real> &prim_s, const AthenaArray<Real> &bcc,
+//     AthenaArray<Real> &cons, AthenaArray<Real> &cons_df, AthenaArray<Real> &cons_s) {
 
-  int is = pmb->is; int js = pmb->js; int ks = pmb->ks;
-  int ie = pmb->ie; int je = pmb->je; int ke = pmb->ke;
+//   int is = pmb->is; int js = pmb->js; int ks = pmb->ks;
+//   int ie = pmb->ie; int je = pmb->je; int ke = pmb->ke;
 
-	if (NDUSTFLUIDS > 0) {
-    for (int n=0; n<NDUSTFLUIDS; ++n) {
-      int dust_id = n;
-      if (dust_id == vapor_id) continue;
-			int rho_id  = 4*dust_id;
-			for (int k=ks; k<=ke; ++k) {
-#pragma omp for schedule(static)
-				for (int j=js; j<=je; ++j) {
-#pragma simd
-					for (int i=is; i<=ie; ++i) {
-            Real rad, phi, z;
-            Real x1 = pmb->pcoord->x1v(i);
-            GetCylCoordInSpherical(pmb->pcoord, rad, phi, z, i, j, k);
-            cons_df(rho_id, k, j, i) = std::max(cons_df(rho_id, k, j, i),
-              dust_percent_floor*DenProfileCyl_dust(rad, phi, z, initial_D2G[dust_id], Hratio[dust_id]));
-					}
-				}
-			}
-		}
-	}
-  return;
-}
+// 	if (NDUSTFLUIDS > 0) {
+//     for (int n=0; n<NDUSTFLUIDS; ++n) {
+//       int dust_id = n;
+//       if (dust_id == vapor_id) continue;
+// 			int rho_id  = 4*dust_id;
+// 			for (int k=ks; k<=ke; ++k) {
+// 				for (int j=js; j<=je; ++j) {
+// #pragma simd
+// 					for (int i=is; i<=ie; ++i) {
+//             Real rad, phi, z;
+//             Real x1 = pmb->pcoord->x1v(i);
+//             GetCylCoordInSpherical(pmb->pcoord, rad, phi, z, i, j, k);
+//             cons_df(rho_id, k, j, i) = std::max(cons_df(rho_id, k, j, i),
+//               dust_percent_floor*DenProfileCyl_dust(rad, phi, z, initial_D2G[dust_id], Hratio[dust_id]));
+// 					}
+// 				}
+// 			}
+// 		}
+// 	}
+//   return;
+// }
 
 
 void MyStoppingTime(MeshBlock *pmb, const Real time, const AthenaArray<Real> &prim,
@@ -645,6 +720,7 @@ void MyStoppingTime(MeshBlock *pmb, const Real time, const AthenaArray<Real> &pr
               int dust_id = N_Z*p + z;
               Real &st_time = stopping_time(dust_id, k, j, i);
               st_time = t_stop;
+              // st_time = Stokes_number[dust_id]*std::pow(rad_arr(i)/r0, 1.5);
             }
           }
         }
@@ -653,22 +729,29 @@ void MyStoppingTime(MeshBlock *pmb, const Real time, const AthenaArray<Real> &pr
     return;
   }
 
-  for (int n=0; n<NDUSTFLUIDS; ++n) {
-    int dust_id = n;
-    for (int k=kl; k<=ku; ++k) {
-      for (int j=jl; j<=ju; ++j) {
-#pragma omp simd
-        for (int i=il; i<=iu; ++i) {
-          Real &st_time = stopping_time(dust_id, k, j, i);
-          GetCylCoordInSpherical(pmb->pcoord, rad_arr(i), phi_arr(i), z_arr(i), i, j, k);
-          st_time = Stokes_number[dust_id]*std::pow(rad_arr(i), 1.5)*inv_sqrt_gm0;
-        }
-      }
-    }
-  }
   return;
 }
 
+
+void MyVisc(HydroDiffusion *phdif, MeshBlock *pmb,
+  const  AthenaArray<Real> &w, const AthenaArray<Real> &bc,
+  int is, int ie, int js, int je, int ks, int ke) {
+
+  for (int k=ks; k<=ke; ++k) {
+    for (int j=js; j<=je; ++j) {
+      for (int i=is; i<=ie; ++i) {
+        Real rad, phi, z;
+        GetCylCoordInSpherical(pmb->pcoord, rad, phi, z, i, j, k);
+        const Real &gas_pre = w(IPR, k, j, i);
+        const Real &gas_den = w(IDN, k, j, i);
+
+        Real inv_Omega_K = std::pow(rad, 1.5) / std::sqrt(gm0);
+        Real nu_gas      = alpha_vis*inv_Omega_K*gas_pre/gas_den;
+        phdif->nu(HydroDiffusion::DiffProcess::alpha,k,j,i) = nu_gas;
+      }
+    }
+  }
+}
 
 void MyDustDiffusivity(DustFluids *pdf, MeshBlock *pmb,
       const AthenaArray<Real> &w, const AthenaArray<Real> &prim_df,
@@ -682,26 +765,30 @@ void MyDustDiffusivity(DustFluids *pdf, MeshBlock *pmb,
   z_arr.NewAthenaArray(nc1);
 
   Real inv_sqrt_gm0 = 1.0/std::sqrt(gm0);
-  Real gamma = pmb->peos->GetGamma();
 
   if ((N_Z > 0) && (pmb->pphase_change != nullptr)) {
     for (int k=ks; k<=ke; ++k) {
       for (int j=js; j<=je; ++j) {
 #pragma omp simd
-        for (int i=is; i<=ie; ++i) {
+        for (int i=is; i<=ie; ++i) {          
           GetCylCoordInSpherical(pmb->pcoord, rad_arr(i), phi_arr(i), z_arr(i), i, j, k);
           const Real &gas_pre = w(IPR, k, j, i);
           const Real &gas_den = w(IDN, k, j, i);
+          Real rad = pmb->pcoord->x1v(i);
 
           Real inv_Omega_K = std::pow(rad_arr(i), 1.5)*inv_sqrt_gm0;
-          Real nu_gas      = alpha_vis*inv_Omega_K*gamma*gas_pre/gas_den;
+          Real nu_gas      = pmb->phydro->hdif.nu(HydroDiffusion::DiffProcess::alpha, k, j, i);
           Real omega_dyn   = 1.0/inv_Omega_K;
 
           // vapor diffusivity equals gas nu
           int vap_id = vapor_id;
           if (vap_id >= 0 && vap_id < NDUSTFLUIDS) {
+            // artifical decay for outer boundary
+            Real w_damp = 0.2*(x1max-x1min);
+            Real f_decay_art = std::tanh(std::pow((rad-x1max)/w_damp ,2.0)); // outer bc decay
+
             Real &vapor_diff = nu_dust(vap_id, k, j, i);
-            vapor_diff = nu_gas;
+            vapor_diff = nu_gas * f_decay_art;
             Real &vapor_cs = cs_dust(vap_id, k, j, i);
             vapor_cs = std::sqrt(std::max(vapor_diff/omega_dyn, 0.0));
           }
@@ -723,32 +810,8 @@ void MyDustDiffusivity(DustFluids *pdf, MeshBlock *pmb,
         }
       }
     }
-    return;
   }
 
-  for (int n=0; n<NDUSTFLUIDS; n++) {
-    int dust_id = n;
-    for (int k=ks; k<=ke; ++k) {
-      for (int j=js; j<=je; ++j) {
-#pragma omp simd
-        for (int i=is; i<=ie; ++i) {
-          GetCylCoordInSpherical(pmb->pcoord, rad_arr(i), phi_arr(i), z_arr(i), i, j, k);
-
-          const Real &gas_pre = w(IPR, k, j, i);
-          const Real &gas_den = w(IDN, k, j, i);
-
-          Real inv_Omega_K = std::pow(rad_arr(i), 1.5)*inv_sqrt_gm0;
-          Real nu_gas      = alpha_vis*inv_Omega_K*gamma*gas_pre/gas_den;
-
-          Real &diffusivity = nu_dust(dust_id, k, j, i);
-          diffusivity       = nu_gas/(1.0 + SQR(Stokes_number[dust_id]));
-
-          Real &soundspeed  = cs_dust(dust_id, k, j, i);
-          soundspeed        = std::sqrt(diffusivity*inv_Omega_K);
-        }
-      }
-    }
-  }
   return;
 }
 
@@ -763,8 +826,6 @@ void ThermalRelaxation(MeshBlock *pmb, const Real time, const Real dt, const Ath
 
   Real inv_beta  = 1.0/beta;
   //Real inv_beta = (beta > 1.0e-16) ? 1.0/beta : 1.0e16;
-  Real gamma_gas = pmb->peos->GetGamma();
-  Real igm1      = 1.0/(gamma_gas - 1.0);
 
   for (int k=ks; k<=ke; ++k) { // include ghost zone
     for (int j=js; j<=je; ++j) { // prim, cons
@@ -772,6 +833,12 @@ void ThermalRelaxation(MeshBlock *pmb, const Real time, const Real dt, const Ath
       for (int i=is; i<=ie; ++i) {
         Real rad, phi, z;
         GetCylCoordInSpherical(pmb->pcoord, rad, phi, z, i, j, k);
+
+        Real rho_g = prim(IDN, k, j, i);
+        Real rho_v = prim_df(4*vapor_id, k, j, i);
+        Real fv = rho_v/rho_g;
+        Real gamma_gas = pmb->peos->calc_gamma(fv);
+        Real igm1      = 1.0/(gamma_gas - 1.0);
 
         const Real &gas_rho = prim(IDN, k, j, i);
         const Real &gas_pre = prim(IPR, k, j, i);
@@ -834,8 +901,6 @@ void RadiativeCondution(HydroDiffusion *phdif, MeshBlock *pmb,
     int is, int ie, int js, int je, int ks, int ke) {
 
   Real inv_beta  = 1.0/beta;
-  Real gamma_gas = pmb->peos->GetGamma();
-  Real igm1      = 1.0/(gamma_gas - 1.0);
 
   for (int k=ks; k<=ke; ++k) {
     for (int j=js; j<=je; ++j) {
@@ -843,6 +908,12 @@ void RadiativeCondution(HydroDiffusion *phdif, MeshBlock *pmb,
       for (int i=is; i<=ie; ++i) {
         Real rad, phi, z;
         GetCylCoordInSpherical(pmb->pcoord, rad, phi, z, i, j, k);
+
+        Real rho_g = w(IDN, k, j, i);
+        Real rho_v = pmb->pdustfluids->df_w(4*vapor_id, k, j, i);
+        Real fv = rho_v/rho_g;
+        Real gamma_gas = pmb->peos->calc_gamma(fv);
+        Real igm1      = 1.0/(gamma_gas - 1.0);
 
         const Real &gas_rho = w(IDN, k, j, i);
         const Real &gas_pre = w(IPR, k, j, i);
@@ -873,7 +944,7 @@ Real DenProfileCyl_gas(const Real rad, const Real phi, const Real z) {
   Real denmid = rho0*std::pow(rad/r0, pvalue);
   Real dentem = denmid*std::exp(gm0/cs2*(1./std::sqrt(SQR(rad)+SQR(z))-1./rad));
   den         = dentem;
-  return std::max(den, dfloor);
+  return std::max(den, dfloor + dffloor);
 }
 
 
@@ -959,7 +1030,7 @@ int RefinementCondition(MeshBlock *pmb) {
         for (int j=pmb->js; j<=pmb->je; j++) {
           for (int i=pmb->is; i<=pmb->ie; i++) {
             Real &rad   = pmb->pcoord->x1v(i);
-            if ((rad > 1.2) && (rad < 2.4)) {
+            if ((rad > refine_r_min) && (rad < refine_r_max)) {
               Real dust_rho = pmb->pdustfluids->df_w(ice_rho_id, k, j, i) +
                               pmb->pdustfluids->df_w(refrac_rho_id, k, j, i);
               Real ratio    = dust_rho/pmb->phydro->w(IDN, k, j, i);
@@ -1008,6 +1079,17 @@ Real MyMeshSpacingX1(Real x, RegionSize rs) {
   return std::pow(10.0,tmp);
 }
 
+Real CompressedX2(Real x, RegionSize rs)
+{
+    Real x_shifted = 2.0 * x - 1.0;
+    
+    // std::copysign applies the sign of the first arg to the second arg
+    Real w_raw = std::copysign(std::pow(std::abs(x_shifted), 1.1), x_shifted);
+    
+    Real w = 0.5 * (w_raw + 1.0);
+    return w * rs.x2max + (1.0 - w) * rs.x2min;
+}
+
 } // namespace
 
 //----------------------------------------------------------------------------------------
@@ -1029,13 +1111,15 @@ void DiskInnerX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, Athe
         Real rad_ac, phi_ac, z_ac;
         GetCylCoordInSpherical(pco, rad_gh,  phi_gh,  z_gh,  il-i, j, k);
         GetCylCoordInSpherical(pco, rad_ac, phi_ac, z_ac, il, j, k);
+        Real rho_g_active = prim(IDN, k, j, il);
+        Real rho_v_active = prim_df(4*(vapor_id), k, j, il);
+        Real fv = rho_v_active/rho_g_active;
 
         Real cs_square   = PoverRho(rad_gh, phi_gh, z_gh);
         Real omega_dyn   = std::sqrt(gm0/(rad_gh*rad_gh*rad_gh));
         Real vis_vel_cyl = -1.5*(alpha_vis*cs_square/rad_gh/omega_dyn);
         Real vel_K       = vK(pmb->porb, pco->x1v(il-i), pco->x2v(j), pco->x3v(k));
         Real eta_gas     = 0.5*(qvalue + pvalue)*cs_square/SQR(rad_gh*omega_dyn);
-        //Real vel_K_sph   = std::sqrt(gm0/(pco->x1v(il-i)));
         Real vel_K_sph   = vel_K;
 
         Real &gas_rho_gh  = prim(IDN, k, j, il-i);
@@ -1050,15 +1134,16 @@ void DiskInnerX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, Athe
         Real &gas_vel3_ac = prim(IM3, k, j, il);
         Real &gas_pres_ac = prim(IEN, k, j, il);
 
-        gas_rho_gh        = DenProfileCyl_gas(rad_gh, phi_gh, z_gh);
+        gas_rho_gh        = DenProfileCyl_gas(rad_gh, phi_gh, z_gh) / (1.0-fv);
+        // gas_rho_gh           = gas_rho_ac;
         Real vel_gas_phi  = VelProfileCyl_gas(rad_gh, phi_gh, z_gh);
         vel_gas_phi      -= orb_defined*vel_K;
 
         gas_vel1_gh = vis_vel_cyl*std::sin(pco->x2v(j));
-        //Vr_outflow(rad_ac, rad_gh, gas_rho_ac, gas_rho_gh, gas_vel1_ac, gas_vel1_gh);
         gas_vel2_gh = vis_vel_cyl*std::cos(pco->x2v(j));
         gas_vel3_gh = vel_gas_phi;
-        gas_pres_gh = cs_square*gas_rho_gh;
+        Real mu_z = Get_mu(fv);
+        gas_pres_gh = cs_square*(mu_xy/mu_z)*gas_rho_gh;
 
         if (NDUSTFLUIDS > 0) {
           for (int n=0; n<NDUSTFLUIDS; ++n) {
@@ -1068,21 +1153,45 @@ void DiskInnerX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, Athe
             int v2_id   = rho_id + 2;
             int v3_id   = rho_id + 3;
 
-            Real &dust_rho_gh  = prim_df(rho_id, k, j, il-i);
-            Real &dust_vel1_gh = prim_df(v1_id,  k, j, il-i);
-            Real &dust_vel2_gh = prim_df(v2_id,  k, j, il-i);
-            Real &dust_vel3_gh = prim_df(v3_id,  k, j, il-i);
+            if(dust_id == vapor_id){
+              // keep the consistency between gas and vapor.
+              Real &vapor_rho_gh  = prim_df(rho_id, k, j, il-i);
+              Real &vapor_vel1_gh = prim_df(v1_id,  k, j, il-i);
+              Real &vapor_vel2_gh = prim_df(v2_id,  k, j, il-i);
+              Real &vapor_vel3_gh = prim_df(v3_id,  k, j, il-i);
 
-            dust_rho_gh          = DenProfileCyl_dust(rad_gh, phi_gh, z_gh, initial_D2G[dust_id], Hratio[dust_id]);
-            Real vel_dust_cyl    = VelProfileCyl_NSH_rad_dust(rad_gh, phi_gh, z_gh, initial_D2G[dust_id], Stokes_number[dust_id], eta_gas);
-            Real vel_dust_phi    = vel_K_sph + VelProfileCyl_NSH_phi_dust(rad_gh, phi_gh, z_gh, initial_D2G[dust_id], Stokes_number[dust_id], eta_gas);
-            vel_dust_phi        -= orb_defined*vel_K;
-            Real vel_dust_r      = vel_dust_cyl*std::sin(pco->x2v(j));
-            Real vel_dust_theta  = vel_dust_cyl*std::cos(pco->x2v(j));
+              vapor_rho_gh = gas_rho_gh * fv;
+              vapor_vel1_gh = gas_vel1_gh;
+              vapor_vel2_gh = gas_vel2_gh;
+              vapor_vel3_gh = gas_vel3_gh;
+            } else{
+              Real &dust_rho_gh  = prim_df(rho_id, k, j, il-i);
+              Real &dust_vel1_gh = prim_df(v1_id,  k, j, il-i);
+              Real &dust_vel2_gh = prim_df(v2_id,  k, j, il-i);
+              Real &dust_vel3_gh = prim_df(v3_id,  k, j, il-i);
 
-            dust_vel1_gh = vel_dust_r;
-            dust_vel2_gh = vel_dust_theta;
-            dust_vel3_gh = vel_dust_phi;
+              Real dust_rho_ac  = prim_df(rho_id, k, j, il);
+
+              // dust_rho_gh          = DenProfileCyl_dust(rad_gh, phi_gh, z_gh, initial_D2G[dust_id], Hratio[dust_id]);
+              // Real vel_dust_cyl    = VelProfileCyl_NSH_rad_dust(rad_gh, phi_gh, z_gh, initial_D2G[dust_id], Stokes_number[dust_id], eta_gas);
+              // Real vel_dust_phi    = vel_K_sph + VelProfileCyl_NSH_phi_dust(rad_gh, phi_gh, z_gh, initial_D2G[dust_id], Stokes_number[dust_id], eta_gas);
+              // vel_dust_phi        -= orb_defined*vel_K;
+              // Real vel_dust_r      = vel_dust_cyl*std::sin(pco->x2v(j));
+              // Real vel_dust_theta  = vel_dust_cyl*std::cos(pco->x2v(j));
+
+              // dust_vel1_gh = vel_dust_r;
+              // dust_vel2_gh = vel_dust_theta;
+              Real St_now          = pmb->pdustfluids->stopping_time_array(dust_id, k, j, il) * omega_dyn;
+              Real d2g_now         = dust_rho_ac / gas_rho_ac;
+              Real vel_dust_phi    = vel_K_sph + VelProfileCyl_NSH_phi_dust(rad_gh, phi_gh, z_gh, d2g_now, St_now, eta_gas);
+              vel_dust_phi        -= orb_defined*vel_K;
+
+              dust_rho_gh = dust_rho_ac*SQR(rad_ac)/SQR(rad_gh);
+              dust_vel1_gh = prim_df(v1_id,k,j,il);
+              dust_vel2_gh = prim_df(v2_id,k,j,il);
+              // dust_vel3_gh = prim_df(v3_id,k,j,il);
+              dust_vel3_gh = vel_dust_phi;
+            }
           }
         }
       }
@@ -1107,6 +1216,11 @@ void DiskOuterX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, Athe
       for (int i=1; i<=ngh; ++i) {
         Real rad_gh, phi_gh, z_gh;
         GetCylCoordInSpherical(pco, rad_gh, phi_gh, z_gh, iu+i, j, k);
+        Real rad_ac = pco->x1v(iu);
+        // take fv from active zone
+        Real rho_g_active = prim(IDN, k, j, iu);
+        Real rho_v_active = prim_df(4*(vapor_id), k, j, iu);
+        Real fv = rho_v_active/rho_g_active;
 
         Real cs_square   = PoverRho(rad_gh, phi_gh, z_gh);
         Real omega_dyn   = std::sqrt(gm0/(rad_gh*rad_gh*rad_gh));
@@ -1122,14 +1236,17 @@ void DiskOuterX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, Athe
         Real &gas_vel3_gh = prim(IM3, k, j, iu+i);
         Real &gas_pres_gh = prim(IEN, k, j, iu+i);
 
-        gas_rho_gh        = DenProfileCyl_gas(rad_gh, phi_gh, z_gh);
+        gas_rho_gh        = DenProfileCyl_gas(rad_gh, phi_gh, z_gh) / (1.0-fv);
+        // gas_rho_gh           = prim(IDN, k, j, iu)*SQR(rad_ac)/SQR(rad_gh);
         Real vel_gas_phi  = VelProfileCyl_gas(rad_gh, phi_gh, z_gh);
         vel_gas_phi      -= orb_defined*vel_K;
 
         gas_vel1_gh = vis_vel_cyl*std::sin(pco->x2v(j));
         gas_vel2_gh = vis_vel_cyl*std::cos(pco->x2v(j));
         gas_vel3_gh = vel_gas_phi;
-        gas_pres_gh = cs_square*gas_rho_gh;
+        // gas_pres_gh = cs_square*gas_rho_gh;
+        Real mu_z = Get_mu(fv);
+        gas_pres_gh = cs_square*(mu_xy/mu_z)*gas_rho_gh;
 
         if (NDUSTFLUIDS > 0) {
           for (int n=0; n<NDUSTFLUIDS; ++n) {
@@ -1139,24 +1256,72 @@ void DiskOuterX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, Athe
             int v2_id   = rho_id + 2;
             int v3_id   = rho_id + 3;
 
-            Real &dust_rho_gh  = prim_df(rho_id, k, j, iu+i);
-            Real &dust_vel1_gh = prim_df(v1_id,  k, j, iu+i);
-            Real &dust_vel2_gh = prim_df(v2_id,  k, j, iu+i);
-            Real &dust_vel3_gh = prim_df(v3_id,  k, j, iu+i);
+            if(dust_id == vapor_id){
+              // keep the consistency between gas and vapor.
+              Real &vapor_rho_gh  = prim_df(rho_id, k, j, iu+i);
+              Real &vapor_vel1_gh = prim_df(v1_id,  k, j, iu+i);
+              Real &vapor_vel2_gh = prim_df(v2_id,  k, j, iu+i);
+              Real &vapor_vel3_gh = prim_df(v3_id,  k, j, iu+i);
 
-            dust_rho_gh        = DenProfileCyl_dust(rad_gh, phi_gh, z_gh, initial_D2G[dust_id], Hratio[dust_id]);
-            Real vel_dust_phi  = vel_K_sph + VelProfileCyl_NSH_phi_dust(rad_gh, phi_gh, z_gh, initial_D2G[dust_id], Stokes_number[dust_id], eta_gas);
-            vel_dust_phi      -= orb_defined*vel_K;
-            Real vel_dust_NSH  = VelProfileCyl_NSH_rad_dust(rad_gh, phi_gh, z_gh, initial_D2G[dust_id], Stokes_number[dust_id], eta_gas);
+              vapor_rho_gh = gas_rho_gh * fv;
+              vapor_vel1_gh = gas_vel1_gh;
+              vapor_vel2_gh = gas_vel2_gh;
+              vapor_vel3_gh = gas_vel3_gh;
+            } else{
+              Real &dust_rho_gh  = prim_df(rho_id, k, j, iu+i);
+              Real &dust_vel1_gh = prim_df(v1_id,  k, j, iu+i);
+              Real &dust_vel2_gh = prim_df(v2_id,  k, j, iu+i);
+              Real &dust_vel3_gh = prim_df(v3_id,  k, j, iu+i);
+              // Real Hratio_now    = 0.3;
+              // dust_rho_gh        = DenProfileCyl_dust(rad_gh, phi_gh, z_gh, initial_D2G[dust_id], Hratio_now);
+              // Real St_now        = 0.12;
+              // Real d2g_now       = dust_rho_gh / gas_rho_gh;
+              // Real vel_dust_phi  = vel_K_sph + VelProfileCyl_NSH_phi_dust(rad_gh, phi_gh, z_gh, d2g_now, St_now, eta_gas);
+              // vel_dust_phi      -= orb_defined*vel_K;
+              // Real vel_dust_NSH  = VelProfileCyl_NSH_rad_dust(rad_gh, phi_gh, z_gh, d2g_now, St_now, eta_gas);
 
-            Real vel_dust_cyl;
-            (Dust_Supply_Flag) ? (vel_dust_cyl = vel_dust_NSH) : (vel_dust_cyl = 0.0);
-            Real vel_dust_r      = vel_dust_cyl*std::sin(pco->x2v(j));
-            Real vel_dust_theta  = vel_dust_cyl*std::cos(pco->x2v(j));
+              // Real vel_dust_cyl;
+              // (Dust_Supply_Flag) ? (vel_dust_cyl = vel_dust_NSH) : (vel_dust_cyl = 0.0);
+              // Real vel_dust_r      = vel_dust_cyl*std::sin(pco->x2v(j));
+              // Real vel_dust_theta  = vel_dust_cyl*std::cos(pco->x2v(j));
 
-            dust_vel1_gh = vel_dust_r;
-            dust_vel2_gh = vel_dust_theta;
-            dust_vel3_gh = vel_dust_phi;
+              // dust_vel1_gh = vel_dust_r;
+              // dust_vel2_gh = vel_dust_theta;
+              // dust_vel3_gh = vel_dust_phi;
+
+
+              dust_rho_gh  = prim_df(rho_id, k, j, iu) * SQR(rad_ac)/SQR(rad_gh);
+              dust_vel1_gh = prim_df(v1_id,  k, j, iu);
+              dust_vel2_gh = prim_df(v2_id,  k, j, iu);
+              dust_vel3_gh = prim_df(v3_id,  k, j, iu) * rad_ac/rad_gh;
+            }
+
+            if (FLX_COR){
+              // Real x2v_gh = pco->x2v(j);
+              // Real x1f_gh = pco->x1f(iu+1); // cell surface
+              // Real dl_th = 2.0/r0 * x1f_gh * Hratio[0]/3.0;
+              // Real dS_x1_tot = dl_th * (PI * x1f_gh);
+              int ice_id = GetIceDustId(0);
+              int sil_id = GetRefracDustId(0);
+
+              // Real Mdot_dust = -M_dot_ice_const * Constants::solar_mass_cgs/ Constants::yr_cgs; // in cgs
+              // Mdot_dust /= (pmb->pmy_mesh->punit->code_mass_cgs /pmb->pmy_mesh->punit->code_time_cgs);
+  
+              // if ((x2v_gh > PI/2.0 - dl_th/2.0) and (x2v_gh < PI/2.0 + dl_th/2.0) ){
+              //   pmb->pdustfluids->inflx_dust_x1(ice_id, k, j, 0) = Mdot_dust / dS_x1_tot;
+              //   pmb->pdustfluids->inflx_dust_x1(sil_id, k, j, 0) = Mdot_dust / dS_x1_tot;
+              // } else {
+              //   pmb->pdustfluids->inflx_dust_x1(ice_id, k, j, 0) = 0.0;
+              //   pmb->pdustfluids->inflx_dust_x1(sil_id, k, j, 0) = 0.0;
+              // }
+
+              // pmb->pdustfluids->inflx_dust_x1(ice_id, k, j, 0) = 0.0;
+              // pmb->pdustfluids->inflx_dust_x1(sil_id, k, j, 0) = 0.0;
+
+              pmb->pdustfluids->inflx_dust_x1(ice_id, k, j, 0) = prim_df(4*ice_id,k,j,iu+1) * prim_df(4*ice_id+1,k,j,iu+1);
+              pmb->pdustfluids->inflx_dust_x1(sil_id, k, j, 0) = prim_df(4*sil_id,k,j,iu+1) * prim_df(4*sil_id+1,k,j,iu+1);
+            }
+
           }
         }
       }
@@ -1329,9 +1494,6 @@ void DiskOuterX2(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, Athe
 }
 
 
-
-
-
 int IsBigEndianOutput() {
   short int n = 1;
   char *ep = (char *)&n;
@@ -1343,15 +1505,15 @@ int IsBigEndianOutput() {
 void LocalIsothermalEOS(MeshBlock *pmb, int il, int iu, int jl,
     int ju, int kl, int ku, AthenaArray<Real> &prim, AthenaArray<Real> &cons) {
 
-  Real mygam = pmb->peos->GetGamma();
-  Real igm1  = 1.0/(mygam - 1.0);
-
   for (int k=kl; k<=ku; ++k) {
     for (int j=jl; j<=ju; ++j) {
 #pragma omp simd
-      for (int i=il; i<=iu; ++i) {
-        //Real rad, phi, z;
-        //GetCylCoordInSpherical(pmb->pcoord, rad, phi, z, i, j, k);
+      for (int i=il; i<=iu; ++i) {        
+        Real rho_g = prim(IDN, k, j, i);
+        Real rho_v = pmb->pdustfluids->df_w(4*vapor_id, k, j, i);
+        Real fv = rho_v/rho_g;
+        Real mygam = pmb->peos->calc_gamma(fv);
+        Real igm1  = 1.0/(mygam - 1.0);
 
         Real &gas_pres = prim(IPR, k, j, i);
 
@@ -1362,8 +1524,8 @@ void LocalIsothermalEOS(MeshBlock *pmb, int il, int iu, int jl,
         Real &gas_erg  = cons(IEN, k, j, i);
 
         Real inv_gas_dens = 1.0/gas_dens;
-        //gas_pres = PoverRho(rad, phi, z)*gas_dens;
-        gas_pres = pmb->ruser_meshblock_data[1](j, i)*gas_dens;
+        Real mu_z = Get_mu(fv);
+        gas_pres = pmb->ruser_meshblock_data[1](j, i)*(mu_xy/mu_z)*gas_dens;
         gas_erg  = gas_pres*igm1 + 0.5*(SQR(gas_mom1) + SQR(gas_mom2) + SQR(gas_mom3))*inv_gas_dens;
       }
     }
@@ -1374,9 +1536,6 @@ void LocalIsothermalEOS(MeshBlock *pmb, int il, int iu, int jl,
 
 void InnerWaveDampingGas(MeshBlock *pmb, const Real time, const Real dt, int il, int iu,
     int jl, int ju, int kl, int ku, AthenaArray<Real> &prim, AthenaArray<Real> &cons) {
-
-  Real mygam = pmb->peos->GetGamma();
-  Real igm1  = 1.0/(mygam - 1.0);
 
   Real inv_inner_damp = 1.0/inner_width_damping;
   Real inv_outer_damp = 1.0/outer_width_damping;
@@ -1406,6 +1565,12 @@ void InnerWaveDampingGas(MeshBlock *pmb, const Real time, const Real dt, int il,
       for (int i=il; i<=iu; ++i) {
         Real x1 = pmb->pcoord->x1v(i);
         GetCylCoordInSpherical(pmb->pcoord, rad_arr(i), phi_arr(i), z_arr(i), i, j, k); // convert to cylindrical coordinates
+
+        Real rho_g = prim(IDN, k, j, i);
+        Real rho_v = pmb->pdustfluids->df_w(4*vapor_id, k, j, i);
+        Real fv = rho_v/rho_g;
+        Real mygam = pmb->peos->calc_gamma(fv);
+        Real igm1  = 1.0/(mygam - 1.0);
 
         if (rad_arr(i) <= radius_inner_damping) {
           // See de Val-Borro et al. 2006 & 2007
@@ -1467,9 +1632,6 @@ void InnerWaveDampingGas(MeshBlock *pmb, const Real time, const Real dt, int il,
 void OuterWaveDampingGas(MeshBlock *pmb, const Real time, const Real dt, int il, int iu,
     int jl, int ju, int kl, int ku, AthenaArray<Real> &prim, AthenaArray<Real> &cons) {
 
-  Real mygam = pmb->peos->GetGamma();
-  Real igm1  = 1.0/(mygam - 1.0);
-
   Real inv_inner_damp = 1.0/inner_width_damping;
   Real inv_outer_damp = 1.0/outer_width_damping;
 
@@ -1498,6 +1660,12 @@ void OuterWaveDampingGas(MeshBlock *pmb, const Real time, const Real dt, int il,
       for (int i=il; i<=iu; ++i) {
         Real x1 = pmb->pcoord->x1v(i);
         GetCylCoordInSpherical(pmb->pcoord, rad_arr(i), phi_arr(i), z_arr(i), i, j, k); // convert to cylindrical coordinates
+
+        Real rho_g = prim(IDN, k, j, i);
+        Real rho_v = pmb->pdustfluids->df_w(4*vapor_id, k, j, i);
+        Real fv = rho_v/rho_g;
+        Real mygam = pmb->peos->calc_gamma(fv);
+        Real igm1  = 1.0/(mygam - 1.0);
 
         if (rad_arr(i) >= radius_outer_damping) {
           // See de Val-Borro et al. 2006 & 2007
@@ -1559,9 +1727,6 @@ void OuterWaveDampingGas(MeshBlock *pmb, const Real time, const Real dt, int il,
 void UpperWaveDampingGas(MeshBlock *pmb, const Real time, const Real dt, int il, int iu,
     int jl, int ju, int kl, int ku, AthenaArray<Real> &prim, AthenaArray<Real> &cons) {
 
-  Real mygam = pmb->peos->GetGamma();
-  Real igm1  = 1.0/(mygam - 1.0);
-
   Real inv_upper_damp = 1.0/upper_altitude_damping;
   Real inv_lower_damp = 1.0/lower_altitude_damping;
 
@@ -1590,6 +1755,12 @@ void UpperWaveDampingGas(MeshBlock *pmb, const Real time, const Real dt, int il,
       for (int i=il; i<=iu; ++i) {
         Real x1 = pmb->pcoord->x1v(i);
         GetCylCoordInSpherical(pmb->pcoord, rad_arr(i), phi_arr(i), z_arr(i), i, j, k); // convert to cylindrical coordinates
+
+        Real rho_g = prim(IDN, k, j, i);
+        Real rho_v = pmb->pdustfluids->df_w(4*vapor_id, k, j, i);
+        Real fv = rho_v/rho_g;
+        Real mygam = pmb->peos->calc_gamma(fv);
+        Real igm1  = 1.0/(mygam - 1.0);
 
         if (x2 <= theta_upper_damping) {
           // See de Val-Borro et al. 2006 & 2007
@@ -1621,11 +1792,17 @@ void UpperWaveDampingGas(MeshBlock *pmb, const Real time, const Real dt, int il,
           Real &gas_mom3 = cons(IM3, k, j, i);
           Real &gas_erg  = cons(IEN, k, j, i);
 
-          Real delta_gas_rho  = (gas_rho_0  - gas_rho )*Theta_func(i)*inv_damping_tau(i)*dt;
-          Real delta_gas_vel1 = (gas_vel1_0 - gas_vel1)*Theta_func(i)*inv_damping_tau(i)*dt;
-          Real delta_gas_vel2 = (gas_vel2_0 - gas_vel2)*Theta_func(i)*inv_damping_tau(i)*dt;
-          Real delta_gas_vel3 = (gas_vel3_0 - gas_vel3)*Theta_func(i)*inv_damping_tau(i)*dt;
-          Real delta_gas_pre  = (gas_pre_0  - gas_pre )*Theta_func(i)*inv_damping_tau(i)*dt;
+          // Real delta_gas_rho  = (gas_rho_0  - gas_rho )*Theta_func(i)*inv_damping_tau(i)*dt;
+          // Real delta_gas_vel1 = (gas_vel1_0 - gas_vel1)*Theta_func(i)*inv_damping_tau(i)*dt;
+          // Real delta_gas_vel2 = (gas_vel2_0 - gas_vel2)*Theta_func(i)*inv_damping_tau(i)*dt;
+          // Real delta_gas_vel3 = (gas_vel3_0 - gas_vel3)*Theta_func(i)*inv_damping_tau(i)*dt;
+          // Real delta_gas_pre  = (gas_pre_0  - gas_pre )*Theta_func(i)*inv_damping_tau(i)*dt;
+
+          Real delta_gas_rho  = 0.0;
+          Real delta_gas_vel1 = 0.0;
+          Real delta_gas_vel2 = (0.0 - gas_vel2)*Theta_func(i);
+          Real delta_gas_vel3 = 0.0;
+          Real delta_gas_pre  = 0.0;
 
           gas_rho  += delta_gas_rho;
           gas_vel1 += delta_gas_vel1;
@@ -1650,9 +1827,6 @@ void UpperWaveDampingGas(MeshBlock *pmb, const Real time, const Real dt, int il,
 
 void LowerWaveDampingGas(MeshBlock *pmb, const Real time, const Real dt, int il, int iu,
     int jl, int ju, int kl, int ku, AthenaArray<Real> &prim, AthenaArray<Real> &cons) {
-
-  Real mygam = pmb->peos->GetGamma();
-  Real igm1  = 1.0/(mygam - 1.0);
 
   Real inv_upper_damp = 1.0/upper_altitude_damping;
   Real inv_lower_damp = 1.0/lower_altitude_damping;
@@ -1682,6 +1856,12 @@ void LowerWaveDampingGas(MeshBlock *pmb, const Real time, const Real dt, int il,
       for (int i=il; i<=iu; ++i) {
         Real x1 = pmb->pcoord->x1v(i);
         GetCylCoordInSpherical(pmb->pcoord, rad_arr(i), phi_arr(i), z_arr(i), i, j, k); // convert to cylindrical coordinates
+
+        Real rho_g = prim(IDN, k, j, i);
+        Real rho_v = pmb->pdustfluids->df_w(4*vapor_id, k, j, i);
+        Real fv = rho_v/rho_g;
+        Real mygam = pmb->peos->calc_gamma(fv);
+        Real igm1  = 1.0/(mygam - 1.0);
 
         if (x2 >= theta_lower_damping) {
           // See de Val-Borro et al. 2006 & 2007
@@ -1713,11 +1893,17 @@ void LowerWaveDampingGas(MeshBlock *pmb, const Real time, const Real dt, int il,
           Real &gas_mom3 = cons(IM3, k, j, i);
           Real &gas_erg  = cons(IEN, k, j, i);
 
-          Real delta_gas_rho  = (gas_rho_0  - gas_rho )*Theta_func(i)*inv_damping_tau(i)*dt;
-          Real delta_gas_vel1 = (gas_vel1_0 - gas_vel1)*Theta_func(i)*inv_damping_tau(i)*dt;
-          Real delta_gas_vel2 = (gas_vel2_0 - gas_vel2)*Theta_func(i)*inv_damping_tau(i)*dt;
-          Real delta_gas_vel3 = (gas_vel3_0 - gas_vel3)*Theta_func(i)*inv_damping_tau(i)*dt;
-          Real delta_gas_pre  = (gas_pre_0  - gas_pre )*Theta_func(i)*inv_damping_tau(i)*dt;
+          // Real delta_gas_rho  = (gas_rho_0  - gas_rho )*Theta_func(i)*inv_damping_tau(i)*dt;
+          // Real delta_gas_vel1 = (gas_vel1_0 - gas_vel1)*Theta_func(i)*inv_damping_tau(i)*dt;
+          // Real delta_gas_vel2 = (gas_vel2_0 - gas_vel2)*Theta_func(i)*inv_damping_tau(i)*dt;
+          // Real delta_gas_vel3 = (gas_vel3_0 - gas_vel3)*Theta_func(i)*inv_damping_tau(i)*dt;
+          // Real delta_gas_pre  = (gas_pre_0  - gas_pre )*Theta_func(i)*inv_damping_tau(i)*dt;
+
+          Real delta_gas_rho  = 0.0;
+          Real delta_gas_vel1 = 0.0;
+          Real delta_gas_vel2 = (0.0 - gas_vel2)*Theta_func(i);
+          Real delta_gas_vel3 = 0.0;
+          Real delta_gas_pre  = 0.0;
 
           gas_rho  += delta_gas_rho;
           gas_vel1 += delta_gas_vel1;
@@ -1742,9 +1928,6 @@ void LowerWaveDampingGas(MeshBlock *pmb, const Real time, const Real dt, int il,
 
 void InnerWaveDampingDust(MeshBlock *pmb, const Real time, const Real dt, int il, int iu,
     int jl, int ju, int kl, int ku, AthenaArray<Real> &prim_df, AthenaArray<Real> &cons_df) {
-
-  Real mygam = pmb->peos->GetGamma();
-  Real igm1  = 1.0/(mygam - 1.0);
 
   Real inv_inner_damp = 1.0/inner_width_damping;
   Real inv_outer_damp = 1.0/outer_width_damping;
@@ -1841,8 +2024,6 @@ void InnerWaveDampingDust(MeshBlock *pmb, const Real time, const Real dt, int il
 void OuterWaveDampingDust(MeshBlock *pmb, const Real time, const Real dt, int il, int iu,
     int jl, int ju, int kl, int ku, AthenaArray<Real> &prim_df, AthenaArray<Real> &cons_df) {
 
-  Real mygam = pmb->peos->GetGamma();
-  Real igm1  = 1.0/(mygam - 1.0);
 
   Real inv_inner_damp = 1.0/inner_width_damping;
   Real inv_outer_damp = 1.0/outer_width_damping;
@@ -2046,25 +2227,31 @@ void DustDensityPercentFloor(MeshBlock *pmb, int il, int iu, int jl, int ju,
         int v1_id   = rho_id + 1;
         int v2_id   = rho_id + 2;
         int v3_id   = rho_id + 3;
+        if (dust_id != vapor_id){
 #pragma omp simd
-        for (int i=jl; i<=iu; ++i) {
-          Real &dust_rho  = prim_df(rho_id, k, j, i);
-          Real &dust_vel1 = prim_df(v1_id,  k, j, i);
-          Real &dust_vel2 = prim_df(v2_id,  k, j, i);
-          Real &dust_vel3 = prim_df(v3_id,  k, j, i);
+          for (int i=il; i<=iu; ++i) {
+            Real &dust_rho  = prim_df(rho_id, k, j, i);
+            Real &dust_vel1 = prim_df(v1_id,  k, j, i);
+            Real &dust_vel2 = prim_df(v2_id,  k, j, i);
+            Real &dust_vel3 = prim_df(v3_id,  k, j, i);
+  
+            Real &dust_dens = cons_df(rho_id, k, j, i);
+            Real &dust_mom1 = cons_df(v1_id,  k, j, i);
+            Real &dust_mom2 = cons_df(v2_id,  k, j, i);
+            Real &dust_mom3 = cons_df(v3_id,  k, j, i);
+  
+            // Real density_init = DenProfileCyl_dust(rad_arr(i), phi_arr(i), z_arr(i),
+            //                                        initial_D2G[dust_id], Hratio[dust_id]);
+            // Real dust_floor = std::max(dffloor, dust_percent_floor*density_init);
 
-          Real &dust_dens = cons_df(rho_id, k, j, i);
-          Real &dust_mom1 = cons_df(v1_id,  k, j, i);
-          Real &dust_mom2 = cons_df(v2_id,  k, j, i);
-          Real &dust_mom3 = cons_df(v3_id,  k, j, i);
-
-          Real density_init = DenProfileCyl_dust(rad_arr(i), phi_arr(i), z_arr(i), initial_D2G[dust_id], Hratio[dust_id]);
-
-          dust_rho  = std::max(dust_rho, dust_percent_floor*density_init);
-          dust_dens = dust_rho;
-          dust_mom1 = dust_dens*dust_vel1;
-          dust_mom2 = dust_dens*dust_vel2;
-          dust_mom3 = dust_dens*dust_vel3;
+            Real dust_floor = dffloor;
+  
+            dust_rho  = std::max(dust_rho, dust_floor);
+            dust_dens = dust_rho;
+            dust_mom1 = dust_dens*dust_vel1;
+            dust_mom2 = dust_dens*dust_vel2;
+            dust_mom3 = dust_dens*dust_vel3;
+          }
         }
       }
     }
@@ -2077,8 +2264,6 @@ void MeshBlock::UserWorkInLoop() {
 
   Real &time = pmy_mesh->time;
   Real &dt   = pmy_mesh->dt;
-  Real mygam = peos->GetGamma();
-  Real igm1  = 1.0/(mygam - 1.0);
   int dk     = NGHOST;
   if (block_size.nx3 == 1) dk = 0;
 
@@ -2121,6 +2306,89 @@ void MeshBlock::UserWorkInLoop() {
     DustDensityPercentFloor(this, il, iu, jl, ju, kl, ku,
                             pdustfluids->df_w, pdustfluids->df_u);
 
+  for (int k=kl; k<=ku; ++k) {
+    for (int j=jl; j<=ju; ++j) {
+      for (int i=il; i<=iu; ++i) {
+        // pre-calculation
+        const Real &gas_den = phydro->w(IDN,k ,j ,i);
+        const Real &gas_vel1 = phydro->w(IVX, k, j, i);
+        const Real &gas_vel2 = phydro->w(IVY, k, j, i);
+        const Real &gas_vel3 = phydro->w(IVZ, k, j, i);
+
+        // copy gas velocity to tracer;
+        int dust_id = vapor_id;
+        int rho_id  = 4*dust_id;
+        int v1_id   = rho_id + 1;
+        int v2_id   = rho_id + 2;
+        int v3_id   = rho_id + 3;
+        
+        Real &dust_rho  = pdustfluids->df_w(rho_id, k, j, i);
+        Real &dust_vel1 = pdustfluids->df_w(v1_id,  k, j, i);
+        Real &dust_vel2 = pdustfluids->df_w(v2_id,  k, j, i);
+        Real &dust_vel3 = pdustfluids->df_w(v3_id,  k, j, i);
+
+        Real &dust_den  = pdustfluids->df_u(rho_id, k, j, i);
+        Real &dust_mom1 = pdustfluids->df_u(v1_id,  k, j, i);
+        Real &dust_mom2 = pdustfluids->df_u(v2_id,  k, j, i);
+        Real &dust_mom3 = pdustfluids->df_u(v3_id,  k, j, i);
+
+        dust_vel1 = gas_vel1;
+        dust_vel2 = gas_vel2;
+        dust_vel3 = gas_vel3;
+        dust_mom1 = dust_den*gas_vel1;
+        dust_mom2 = dust_den*gas_vel2;
+        dust_mom3 = dust_den*gas_vel3;
+
+        // copy refractory velocity to ice for each pebble
+        for (int p = 0; p < N_P; ++p) {
+          int refrac_id = GetRefracDustId(p);
+          int ice_id = GetIceDustId(p);
+
+          int refrac_rho_id  = 4*refrac_id;
+          int refrac_v1_id   = refrac_rho_id + 1;
+          int refrac_v2_id   = refrac_rho_id + 2;
+          int refrac_v3_id   = refrac_rho_id + 3;
+          
+          const Real &d1_vel1 = pdustfluids->df_w(refrac_v1_id,  k, j, i);
+          const Real &d1_vel2 = pdustfluids->df_w(refrac_v2_id,  k, j, i);
+          const Real &d1_vel3 = pdustfluids->df_w(refrac_v3_id,  k, j, i);
+          
+          int ice_rho_id  = 4*ice_id;
+          int ice_v1_id   = ice_rho_id + 1;
+          int ice_v2_id   = ice_rho_id + 2;
+          int ice_v3_id   = ice_rho_id + 3;
+          
+          Real &d0_vel1 = pdustfluids->df_w(ice_v1_id,  k, j, i);
+          Real &d0_vel2 = pdustfluids->df_w(ice_v2_id,  k, j, i);
+          Real &d0_vel3 = pdustfluids->df_w(ice_v3_id,  k, j, i);
+
+          const Real &d0_den  = pdustfluids->df_u(ice_rho_id, k, j, i);
+          Real &d0_mom1 = pdustfluids->df_u(ice_v1_id,  k, j, i);
+          Real &d0_mom2 = pdustfluids->df_u(ice_v2_id,  k, j, i);
+          Real &d0_mom3 = pdustfluids->df_u(ice_v3_id,  k, j, i);
+
+          d0_vel1 = d1_vel1;
+          d0_vel2 = d1_vel2;
+          d0_vel3 = d1_vel3;
+          d0_mom1 = d1_vel1*d0_den;
+          d0_mom2 = d1_vel2*d0_den;
+          d0_mom3 = d1_vel3*d0_den;
+        }
+
+        // this is to calculate the temperature for the ghost cells defining boundary conditions
+        if(i < is or i > ie or j < js or j > je){
+          Real E_kg = 0.5*(SQR(gas_vel1) + SQR(gas_vel2) + SQR(gas_vel3))*gas_den;
+          Real rhoe_g = phydro->u(IEN,k,j,i) - E_kg;
+          Real fv = pdustfluids->df_w(4*(vapor_id), k, j, i)/gas_den;
+          Real T_from_erg = pphase_change->Get_T_rhoe_g(rhoe_g, gas_den,fv);
+          
+          phydro->Tem(k, j, i) = T_from_erg;          
+        }
+  
+        }
+      }
+    }
+
   return;
 }
 
@@ -2135,55 +2403,35 @@ void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin)
   (porb->orbital_advection_defined) ? orb_defined = 1.0: orb_defined = 0.0;
   OrbitalVelocityFunc &vK = porb->OrbitalVelocity;
 
-  Real gamma     = peos->GetGamma();
-  Real igm1      = 1.0/(gamma - 1.0);
-  Real inv_gamma = 1.0/gamma;
-
-  if (Isothermal_Flag) {
-    gamma = 1.0;
-    inv_gamma = 1.0;
-  }
-
-  Real inv_gm0      = 1./gm0;
-  Real inv_sqrt_gm0 = 1./std::sqrt(gm0);
-
 	for(int k=ks; k<=ke; k++) {
     Real &phi = pco->x3v(k);
 		for(int j=js; j<=je; j++) {
       Real &theta = pco->x2v(j);
 #pragma omp simd
 			for(int i=is; i<=ie; i++) {
-
-        Real &gas_rho  = phy->w(IDN, k, j, i);
-        Real &gas_vel1 = phy->w(IM1, k, j, i);
-        Real &gas_vel2 = phy->w(IM2, k, j, i);
-        Real &gas_vel3 = phy->w(IM3, k, j, i);
-        Real &gas_pres = phy->w(IPR, k, j, i);
-
-        Real &sound_speed = user_out_var(0, k, j, i);
-        Real cs_square    = gas_pres/gas_rho;
-        sound_speed       = std::sqrt(cs_square);
+        user_out_var(0,k,j,i) = pdustfluids->stopping_time_array(0,k,j,i);
+        user_out_var(1,k,j,i) = pdustfluids->nu_dustfluids_array(0,k,j,i);
 			}
 		}
 	}
 
-	for(int p=0; p<N_P; ++p) {
-    int ice_rho_id = 4*GetIceDustId(p);
-    int refrac_rho_id = 4*GetRefracDustId(p);
-    for(int k=ks; k<=ke; k++) {
-      for(int j=js; j<=je; j++) {
-#pragma omp simd
-        for(int i=is; i<=ie; i++) {
-          Real dust_rho = pdustfluids->df_w(ice_rho_id, k, j, i) +
-                          pdustfluids->df_w(refrac_rho_id, k, j, i);
-          Real &gas_rho  = phydro->w(IDN, k, j, i);
+// 	for(int p=0; p<N_P; ++p) {
+//     int ice_rho_id = 4*GetIceDustId(p);
+//     int refrac_rho_id = 4*GetRefracDustId(p);
+//     for(int k=ks; k<=ke; k++) {
+//       for(int j=js; j<=je; j++) {
+// #pragma omp simd
+//         for(int i=is; i<=ie; i++) {
+//           Real dust_rho = pdustfluids->df_w(ice_rho_id, k, j, i) +
+//                           pdustfluids->df_w(refrac_rho_id, k, j, i);
+//           Real &gas_rho  = phydro->w(IDN, k, j, i);
 
-          // Dust-Gas Ratio
-          Real &ratio = user_out_var(p+1, k, j, i);
-          ratio       = dust_rho/gas_rho;
-        }
-      }
-    }
-	}
+//           // Dust-Gas Ratio
+//           Real &ratio = user_out_var(p+1, k, j, i);
+//           ratio       = dust_rho/gas_rho;
+//         }
+//       }
+//     }
+// 	}
 	return;
 }

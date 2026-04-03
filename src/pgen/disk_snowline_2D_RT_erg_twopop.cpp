@@ -40,6 +40,7 @@
 #include "../mesh/mesh.hpp"
 #include "../orbital_advection/orbital_advection.hpp"
 #include "../parameter_input.hpp"
+#include "../units/units.hpp"  // For Constants and unit conversions
 
 namespace {
 void GetCylCoord(Coordinates *pco,Real &rad,Real &phi,Real &z,int i,int j,int k);
@@ -100,6 +101,7 @@ void Vr_Mdot(const Real r_active, const Real r_ghost, const Real rho_active,
 // problem parameters which are useful to make global to this file
 Real gm0, r0, rho0, T0, gamma_gas, Omega0, nu_alpha, nu_slope, cs2_0, qvalue, pvalue;
 Real dfloor, dffloor, pfloor;
+Real KELVIN;  // Temperature conversion factor from PhaseChange module
 
 //snowline
 Real f_ICE_inter0, taus0, rho_sil_inter, rho_ice_inter;
@@ -450,6 +452,9 @@ void MeshBlock::InitUserMeshBlockData(ParameterInput *pin){
 //========================================================================================
 
 void MeshBlock::ProblemGenerator(ParameterInput *pin) {
+  // Compute KELVIN from code units (same calculation as in PhaseChange module)
+  KELVIN = SQR(pmy_mesh->punit->code_velocity_cgs) / (Constants::k_boltzmann_cgs / Constants::hydrogen_mass_cgs);
+
   Real rad(0.0), phi(0.0), z(0.0); // cylindrical coordinate
   Real x1, x2, x3; // sphercial coordinate
 	Real igm1 = 1.0/(gamma_gas - 1.0);

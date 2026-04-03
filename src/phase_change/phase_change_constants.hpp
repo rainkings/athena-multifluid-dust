@@ -24,7 +24,7 @@
 constexpr Real L_heat_cgs = 2.75e10;
 
 //! Heat capacity of water ice [erg/(g*K)]
-constexpr Real Cd_water_cgs = 1.0;
+constexpr Real Cd_water_cgs = 0.0;
 
 //! Equilibrium vapor pressure prefactor [erg/cm^3]
 constexpr Real P_eq0_cgs = 1.14e13;
@@ -40,8 +40,8 @@ constexpr Real mu_xy = 2.34;
 constexpr Real mu_H2 = 2.0;
 constexpr Real mu_He = 4.0;
 
-//! KELVIN 1/(kb/m_p)
-constexpr Real KELVIN = 6.4102564103e+01;
+// Note: KELVIN is now a member variable of PhaseChange class,
+// computed in the constructor from code units: KELVIN = code_velocity_cgs^2 / (k_b/m_p)
 
 //! Collisional cross-section of H2 [cm^2]
 constexpr Real sigma_mol_cgs = 2.e-15;
@@ -49,7 +49,7 @@ constexpr Real sigma_mol_cgs = 2.e-15;
 // number of vapor species
 #define        NVapor    1  // (Yu) only one vapor is allowed now.
 #define        vapor_id  (NDUSTFLUIDS-1)  // last dust fluid as vapor. must have this parenthesis when defining!
-#define        FLX_COR   0
+#define        FLX_COR   1
 
 // Helpers to retrieve composition-specific dust IDs for pebble p
 inline constexpr int GetIceDustId(int pebble_idx) {

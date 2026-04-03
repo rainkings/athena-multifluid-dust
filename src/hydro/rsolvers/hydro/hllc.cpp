@@ -68,7 +68,7 @@ void Hydro::RiemannSolver(const int k, const int j, const int il, const int iu,
     Real cl, cr, fv_l, fv_r;
     if (N_Z > 0){ // (Yu, 2025-11-18)
       // cs_r, cs_l change with grid cells.
-      int vapor_den_id = vapor_id*4;
+      int vapor_den_id = vapor_id;
       fv_l = rl_(vapor_den_id,i);
       fv_r = rr_(vapor_den_id,i);
       cl = pmy_block->peos->SoundSpeed_fv(wli,fv_l);
