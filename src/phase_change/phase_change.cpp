@@ -97,6 +97,8 @@ void PhaseChange::PhaseChangeSource(MeshBlock *pmb, const Real time, const Real 
 const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
     const AthenaArray<Real> &prim_s, const AthenaArray<Real> &bcc,
     AthenaArray<Real> &cons, AthenaArray<Real> &cons_df, AthenaArray<Real> &cons_s) {
+
+  const int ndim = 3; // bug report. vel is always 3 dimensional.
   for (int k=pmb->ks; k<=pmb->ke; ++k) {
     for (int j=pmb->js; j<=pmb->je; ++j) {
 #pragma omp simd
@@ -111,7 +113,7 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
         drho_d_max_array.NewAthenaArray(N_P);
 
         // Velocity arrays (assuming 3D, access dimension from mesh if needed)
-        const int ndim = (pmb->pmy_mesh->f3 ? 3 : (pmb->pmy_mesh->f2 ? 2 : 1));
+        // const int ndim = (pmb->pmy_mesh->f3 ? 3 : (pmb->pmy_mesh->f2 ? 2 : 1));
         AthenaArray<Real> gas_vel_array0, gas_vel_array, gas_vel_array1, dust_vel_array;
         gas_vel_array0.NewAthenaArray(ndim);
         gas_vel_array.NewAthenaArray(ndim);
