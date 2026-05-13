@@ -43,21 +43,22 @@ class PhaseChange {
   PhaseChange(MeshBlock *pmb, ParameterInput *pin);
 
   // Public data arrays
-  AthenaArray<Real> rho_Np_array;  // pebble number density array [1/cm^3] (Yu, 2025-11-18: replaced m_p_array and s_p_array)
+  // AthenaArray<Real> rho_Np_array;  // pebble number density array [1/cm^3] (Yu, 2025-11-18: replaced m_p_array and s_p_array)
   AthenaArray<Real> q_latent;      // latent heat absorption/release rate [code unit]
-  AthenaArray<Real> m_p0_array;    // initial pebble mass array [g] (used to initialize rho_Np)
+  // AthenaArray<Real> m_p0_array;    // initial pebble mass array [g] (used to initialize rho_Np)
   AthenaArray<Real> mmax_array;    // maximum mass allowed by fragmentation [code mass]
-  AthenaArray<Real> m_p_array;     // the evolved pebble mass array, added for relaxation source term [code mass]
+  // AthenaArray<Real> m_p_array;     // the evolved pebble mass array, added for relaxation source term [code mass]
 
   // this is for heat conduction
   AthenaArray<Real> q_diff;      // heat conduction rate [code unit]
+
+  AthenaArray<Real> P_eq_array;
 
   Real L_heat, Cd_water, P_eq0; // phase_change constants 
   Real mmin; // minimum mass in the dust size distribution
   //
   Real Tem0, r0, Tslope; // do this for the moment [26.03.24]Zhixuan
   Real Tem_gas(const Real rad);
-
   // Public functions
   void PhaseChangeSource(MeshBlock *pmb, const Real time, const Real dt,
       const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,

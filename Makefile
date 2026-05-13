@@ -79,6 +79,7 @@ SRC_FILES := $(wildcard src/*.cpp) \
 	     $(wildcard src/orbital_advection/*.cpp) \
 	     $(wildcard src/outputs/*.cpp) \
 	     $(wildcard src/phase_change/*.cpp) \
+			 $(wildcard src/relaxation/*.cpp) \
 	     src/pgen/default_pgen.cpp \
 	     src/pgen/$(PROBLEM_FILE) \
 	     $(wildcard src/reconstruct/*.cpp) \

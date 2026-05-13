@@ -55,6 +55,7 @@ class EquationOfState;
 class Field;
 class DustFluids;
 class PhaseChange; // (Yu, 2025-11-18) added phase change module forward declaration
+class Relaxation; // [26.04.29]Zhixuan added relaxation module forward declaration
 class Gravity;
 class MGGravityDriver;
 class FFTDriver;
@@ -141,6 +142,9 @@ class MeshBlock {
   EquationOfState *peos;
   ChemRadiation *pchemrad;
   OrbitalAdvection *porb;
+
+  // Relaxation module (Zhixuan 26.04.29)
+  Relaxation *prelax;
 
 
   // functions

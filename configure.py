@@ -390,7 +390,7 @@ if args['flux'] == 'default':
     else:
         args['flux'] = 'hllc'
 
-#raise SystemExit when eos_phase_change is selected without np and nz 
+#Zhixuan: raise SystemExit when eos_phase_change is selected without np and nz 
 #make the warning sentence red 
 if args['eos'] == 'general/eos_phase_change':
     if args['np'] == '0' or args['nz'] == '0':

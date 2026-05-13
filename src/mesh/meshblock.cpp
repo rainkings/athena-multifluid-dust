@@ -50,6 +50,7 @@
 #include "mesh_refinement.hpp"
 #include "meshblock_tree.hpp"
 #include "../phase_change/phase_change.hpp"  // (Yu, 2025-11-18) include phase change module
+#include "../relaxation/relaxation.hpp" // [26.04.29]Zhixuan added relaxation module include
 
 //----------------------------------------------------------------------------------------
 //! MeshBlock constructor: constructs coordinate, boundary condition, hydro, field
@@ -227,6 +228,14 @@ MeshBlock::MeshBlock(int igid, int ilid, LogicalLocation iloc, RegionSize input_
   } else {
     pphase_change = nullptr;
   }
+
+  //[26.04.29]Zhixuan added relaxation module 
+  if (N_P > 0) {
+    prelax = new Relaxation(this, pin);
+  } else {
+    prelax = nullptr;
+  }
+
   if (NSCALARS > 0) {
     // if (this->scalars_block)
     pscalars = new PassiveScalars(this, pin);
@@ -438,6 +447,14 @@ MeshBlock::MeshBlock(int igid, int ilid, Mesh *pm, ParameterInput *pin,
   } else {
     pphase_change = nullptr;
   }
+
+  //[26.04.29]Zhixuan added relaxation module (for restart)
+  if (N_P > 0) {
+    prelax = new Relaxation(this, pin);
+  } else {
+    prelax = nullptr;
+  }
+
   if (NSCALARS > 0) {
     // if (this->scalars_block)
     pscalars = new PassiveScalars(this, pin);
@@ -507,10 +524,10 @@ MeshBlock::MeshBlock(int igid, int ilid, Mesh *pm, ParameterInput *pin,
   }
   
   // PhaseChange arrays (Yu, 2025-11-18)
-  if (N_Z > 0) {
-    std::memcpy(pphase_change->rho_Np_array.data(), &(mbdata[os]), pphase_change->rho_Np_array.GetSizeInBytes());
-    os += pphase_change->rho_Np_array.GetSizeInBytes();
-  }
+  // if (N_Z > 0) {
+  //   std::memcpy(pphase_change->rho_Np_array.data(), &(mbdata[os]), pphase_change->rho_Np_array.GetSizeInBytes());
+  //   os += pphase_change->rho_Np_array.GetSizeInBytes();
+  // }
 
   if (NR_RADIATION_ENABLED || IM_RADIATION_ENABLED) {
     if (pnrrad->restart_from_gray) {
@@ -608,6 +625,7 @@ MeshBlock::~MeshBlock() {
   if (SELF_GRAVITY_ENABLED) delete pgrav;
   if (NDUSTFLUIDS > 0) delete pdustfluids;
   if (N_Z > 0) delete pphase_change; // (Yu, 2025-11-18)
+  if (N_P > 0) delete prelax; // [26.04.29]Zhixuan added relaxation module destructor
   if (NSCALARS > 0) delete pscalars;
   if (CHEMRADIATION_ENABLED) {
     delete pchemrad;
@@ -717,9 +735,9 @@ std::size_t MeshBlock::GetBlockSizeInBytes() {
     if (pdustfluids->dfdif.dustfluids_diffusion_defined)
       size += pdustfluids->dfccdif.diff_mom_cc.GetSizeInBytes();
   }
-  if (N_Z > 0) { // PhaseChange arrays for restart (Yu, 2025-11-18)
-    size += pphase_change->rho_Np_array.GetSizeInBytes();
-  }
+  // if (N_Z > 0) { // PhaseChange arrays for restart (Yu, 2025-11-18)
+  //   size += pphase_change->rho_Np_array.GetSizeInBytes();
+  // }
   //[26.03.24]Zhixuan: add the size of m_p_array and Tem
   // if (N_P > 0) {
   //   size += pphase_change->m_p_array.GetSizeInBytes();
@@ -765,9 +783,9 @@ std::size_t MeshBlock::GetBlockSizeInBytesGray() {
     size += (pfield->b.x1f.GetSizeInBytes() + pfield->b.x2f.GetSizeInBytes()
              + pfield->b.x3f.GetSizeInBytes());
 
-  if (N_Z > 0) { // PhaseChange arrays for restart (Yu, 2025-11-18)
-    size += pphase_change->rho_Np_array.GetSizeInBytes();
-  }
+  // if (N_Z > 0) { // PhaseChange arrays for restart (Yu, 2025-11-18)
+  //   size += pphase_change->rho_Np_array.GetSizeInBytes();
+  // }
 
   if (NSCALARS > 0)
     size += pscalars->s.GetSizeInBytes();
