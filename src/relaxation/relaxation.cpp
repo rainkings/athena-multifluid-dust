@@ -361,7 +361,7 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
         Real cs2 = Tem / KELVIN * Get_mu(fv);
         Real H_gas = std::sqrt(cs2) / OmegaK;
         Real rho_g = sigma_g / (std::sqrt(2.0 * PI) * H_gas);
-        Real vth = std::sqrt(8.0 / PI) * std::sqrt(cs2);
+        Real vth = std::sqrt(8.0 / PI * cs2);
 
         // total dust mass (excluding vapor and number densities)
         Real total_dust_mass = 0.0;
@@ -422,7 +422,9 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
           // Second moment: ∫ m^2 f*(m) dm = norm * (6/7) * (m_high^{7/6} - m_low^{7/6})
           M2_relax(p) = norm * (6.0/7.0) * (std::pow(m_high, 7.0/6.0) - std::pow(m_low, 7.0/6.0));
           // number density (monodisperse approximation within each bin)
-          n_relax(p) = SQR(M1_relax(p)) / (M2_relax(p) + 1e-30);
+          // [26.05.17]Zhixuan: The M2 can be very small b/c of the mass integration, so here we shouldn't 
+          //                  add the 1.e-30 factor, which was a bug here...
+          n_relax(p) = SQR(M1_relax(p)) / (M2_relax(p));
           rho_pop_relax(p) = M1_relax(p);
         }
 
@@ -432,7 +434,7 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
         Real St1 = t_stop * OmegaK;
         Real delV = std::sqrt(3.0 * alpha_vis * St1 * cs2);
         // number density of largest bin (volumetric)
-        Real rho_Np_vol = cons_df(4 * (N_Z * largest_bin), k, j, i) / (std::sqrt(2.0 * PI) * H_gas);
+        Real rho_Np_vol = cons_df(4 * (N_P*N_Z + 1 + largest_bin), k, j, i) / (std::sqrt(2.0 * PI) * H_gas);
         Real t_relax = 1.0 / (4.0 * rho_Np_vol * PI * SQR(s_p_array(largest_bin)) * delV) * 100.0;
         Real relax_rate = dt / t_relax;
         // if (relax_rate > 1.0) relax_rate = 1.0;   // limit to full relaxation
@@ -447,6 +449,7 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
         for (int n = 0; n < NFLUIDS; ++n) mass_before += cons_df(4*n, k, j, i);
 
         for (int p = 0; p < N_P; ++p) {
+          Real rho_pop_new = 0.0;
           for (int zi = 0; zi < N_Z; ++zi) {
             int dust_id = N_Z * p + zi;
             Real rho_target = rho_pop_relax(p) * comp_ratio(zi);
@@ -456,30 +459,41 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
             cons_df(4*dust_id+1, k, j, i) = rho_new_val * v1s(dust_id);
             cons_df(4*dust_id+2, k, j, i) = rho_new_val * v2s(dust_id);
             cons_df(4*dust_id+3, k, j, i) = rho_new_val * v3s(dust_id);
+
+            rho_pop_new += rho_new_val;
+
+            // std::cout << "Relaxation: bin " << p << " zi " << zi << " rho_target " << rho_target 
+            //           << " rho_current " << rho_current << " rho_new " << rho_new_val << std::endl;
           }
+
           int n_id = N_Z * N_P + 1 + p;
           Real n_target = n_relax(p);
           Real n_current = cons_df(4*n_id, k, j, i);
           Real n_new_val = n_current + relax_rate * (n_target - n_current);
           cons_df(4*n_id, k, j, i) = n_new_val;
           ns_new(p) = n_new_val;
+          // std::cout << "Relaxation: bin " << p << " n_target " << n_target 
+          //           << " n_current " << n_current << " n_new " << n_new_val << std::endl;
+
+          m_p_array(p,k,j,i) = rho_pop_new / ns_new(p); // update characteristic mass for this bin 
         }
 
-        //7. Update characteristic masses for each bin
-        for (int p = 0; p < N_P; ++p) {
-          Real rho_pop_new = 0.0;
-          for (int zi = 0; zi < N_Z; ++zi) {
-            int dust_id = N_Z * p + zi;
-            rho_pop_new += cons_df(4*dust_id, k, j, i);
-          }
-          if (ns_new(p) > 0.0) {
-            m_p_array(p, k, j, i) = rho_pop_new / ns_new(p);
-          } else {
-            m_p_array(p, k, j, i) = m_p0_array(p);   // fallback
-          }
-        }
+        // //7. Update characteristic masses for each bin
+        // for (int p = 0; p < N_P; ++p) {
+        //   Real rho_pop_new = 0.0;
+        //   for (int zi = 0; zi < N_Z; ++zi) {
+        //     int dust_id = N_Z * p + zi;
+        //     rho_pop_new += cons_df(4*dust_id, k, j, i);
+        //   }
+        //   if (ns_new(p) > 0.0) {
+        //     m_p_array(p, k, j, i) = rho_pop_new / ns_new(p);
+        //   } else {
+        //     m_p_array(p, k, j, i) = m_p0_array(p);   // fallback
+        //   }
+        // }
+        
 
-        // -------- 8. Optional mass conservation check ----------
+        //mass conservation check
         Real mass_after = 0.0;
         for (int n = 0; n < NFLUIDS; ++n) mass_after += cons_df(4*n, k, j, i);
         if (std::abs(mass_after - mass_before) / (mass_before + 1e-30) > 1e-10) {

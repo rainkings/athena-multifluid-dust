@@ -229,11 +229,11 @@ void MeshBlock::InitUserMeshBlockData(ParameterInput *pin){
     SetUserOutputVariableName(p.first + offset_gas, p.second);
   }
 
-    SetUserOutputVariableName(15, "mmax");
+    SetUserOutputVariableName(20, "mmax");
 
-    SetUserOutputVariableName(16, "drho_i_dt");
-    SetUserOutputVariableName(17, "drho_i1_dt");
-    SetUserOutputVariableName(18, "drho_v_dt");
+    SetUserOutputVariableName(21, "drho_i_dt");
+    SetUserOutputVariableName(22, "drho_i1_dt");
+    SetUserOutputVariableName(23, "drho_v_dt");
 
     return;
 }
@@ -745,11 +745,11 @@ void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin){
     for (int j=js; j<=je; ++j) {
       for (int i=is-NGHOST; i<=ie+NGHOST; ++i) {
         
-        user_out_var(12,k,j,i) = phydro->Tem(k,j,i);
-        user_out_var(13,k,j,i) = phydro->flux[IDN](k,j,i);
-        user_out_var(14,k,j,i) = phydro->hdif.nu(HydroDiffusion::DiffProcess::alpha, k, j, i);
+        user_out_var(17,k,j,i) = phydro->Tem(k,j,i);
+        user_out_var(18,k,j,i) = phydro->flux[IDN](k,j,i);
+        user_out_var(19,k,j,i) = phydro->hdif.nu(HydroDiffusion::DiffProcess::alpha, k, j, i);
 
-        user_out_var(10,k,j,i) = pphase_change->P_eq_array(k,j,i);
+        user_out_var(15,k,j,i) = pphase_change->P_eq_array(k,j,i);
 
         if (pphase_change != nullptr && N_P > 0) {
           for (int p=0; p<N_P; p++) {
@@ -785,7 +785,7 @@ void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin){
             user_out_var(p*5+3,k,j,i) = pdustfluids->df_flux[X1DIR](4*(p*N_Z),k,j,i);
             user_out_var(p*5+4,k,j,i) = pdustfluids->nu_dustfluids_array(p*N_Z,k,j,i); 
           }
-        user_out_var(15,k,j,i) = prelax->mmax_array(k,j,i) * pmy_mesh->punit->code_mass_cgs; // Convert to CGS for output
+        user_out_var(20,k,j,i) = prelax->mmax_array(k,j,i) * pmy_mesh->punit->code_mass_cgs; // Convert to CGS for output
         }
         
       }
@@ -830,9 +830,9 @@ void MySource(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<
       for (int j=pmb->js; j<=pmb->je; ++j) {
 #pragma omp simd
         for (int i=pmb->is; i<=pmb->ie; ++i) {
-            pmb->user_out_var(16,k,j,i) = (cons_df(0,k,j,i) - rho_i(k,j,i)) / dt;
-            pmb->user_out_var(17,k,j,i) = (cons_df(4*2,k,j,i) - rho_i1(k,j,i)) / dt;
-            pmb->user_out_var(18,k,j,i) = (cons_df(4*4,k,j,i) - rho_v(k,j,i)) / dt;
+            pmb->user_out_var(21,k,j,i) = (cons_df(0,k,j,i) - rho_i(k,j,i)) / dt;
+            pmb->user_out_var(22,k,j,i) = (cons_df(4*2,k,j,i) - rho_i1(k,j,i)) / dt;
+            pmb->user_out_var(23,k,j,i) = (cons_df(4*4,k,j,i) - rho_v(k,j,i)) / dt;
           }
         }
       }
@@ -858,19 +858,17 @@ void MySource(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<
   // std::cout << "v1_sil_small = " << v1_sil_small << std::endl;
 //
 // std::cout << cons_df(4*0, 0, 0, 2) << std::endl;
-// std::cout << cons_df(4*1, 0, 0, 2) << std::endl;
-// std::cout << cons_df(4*3, 0, 0, 2) << std::endl;
-// std::cout << cons_df(4*5, 0, 0, 2) << std::endl;
-// std::cout << pmb->prelax->m_p_array(0,0,0,60) << std::endl;
+// std::cout << cons_df(4*4, 0, 0, 2) << std::endl;
+// // std::cout << cons_df(4*2, 0, 0, 2) << std::endl;
+// std::cout << pmb->prelax->m_p_array(0,0,0,2) << std::endl;
 
   if (N_P > 1 and time >dust_start_injection and Relaxation_Flag){
     pmb->prelax->RelaxationSource(pmb, time, dt, gm0, alpha_vis, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s, v_frag);
   }
 // std::cout << cons_df(4*0, 0, 0, 2) << std::endl;
-// std::cout << cons_df(4*1, 0, 0, 2) << std::endl;
-// std::cout << cons_df(4*3, 0, 0, 2) << std::endl;
-// std::cout << cons_df(4*5, 0, 0, 2) << std::endl;
-// std::cout << pmb->prelax->m_p_array(0,0,0,60) << std::endl;
+// std::cout << cons_df(4*4, 0, 0, 2) << std::endl;
+// // std::cout << cons_df(4*2, 0, 0, 2) << std::endl;
+// std::cout << pmb->prelax->m_p_array(0,0,0,2) << std::endl;
 // std::cout << "........" << std::endl;
 
   return;
