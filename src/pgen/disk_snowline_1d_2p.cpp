@@ -802,7 +802,6 @@ void MySource(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<
 
   LocalIsothermalEOS(pmb, time, dt, prim, prim_df, bcc, cons, cons_df);
   // drift_vel(pmb, time, dt, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s);
-  if(N_Z > 1 and time > dust_start_injection and PhaseChange_Flag){  // (Yu, 2025-11-16)
     AthenaArray<Real> rho_i, rho_i1, rho_v;
     int si, sj, sk; 
     si = cons_df.GetDim1(); 
@@ -819,32 +818,37 @@ void MySource(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<
         for (int i=pmb->is; i<=pmb->ie; ++i) {
             rho_i(k,j,i) = cons_df(0,k,j,i); // ice for pebble size bin 0 
             rho_i1(k,j,i) = cons_df(4*2,k,j,i); // ice for pebble size bin 1 
-            rho_v(k,j,i) = cons_df(4*4,k,j,i); // vapor
+            rho_v(k,j,i) = cons_df(4*6,k,j,i); // vapor
+            // std::cout << i <<std::endl;
+            // std::cout << rho_v(k,j,i) << std::endl;
           }
         }
       }
+  if(N_Z > 1 and time > dust_start_injection and PhaseChange_Flag){  // (Yu, 2025-11-16)
 
     pmb->pphase_change->PhaseChangeSource(pmb, time, dt, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s);
 
+
+  }
     for (int k=pmb->ks; k<=pmb->ke; ++k) {
       for (int j=pmb->js; j<=pmb->je; ++j) {
 #pragma omp simd
         for (int i=pmb->is; i<=pmb->ie; ++i) {
             pmb->user_out_var(21,k,j,i) = (cons_df(0,k,j,i) - rho_i(k,j,i)) / dt;
             pmb->user_out_var(22,k,j,i) = (cons_df(4*2,k,j,i) - rho_i1(k,j,i)) / dt;
-            pmb->user_out_var(23,k,j,i) = (cons_df(4*4,k,j,i) - rho_v(k,j,i)) / dt;
+            pmb->user_out_var(23,k,j,i) = (cons_df(4*6,k,j,i) - rho_v(k,j,i)) / dt;
+            // std::cout << i <<std::endl;
+            // std::cout << cons_df(4*6,k,j,i) << std::endl;
           }
         }
       }
-
-  }
 
 
 
   AthenaArray<Real> v_frag;
   v_frag.NewAthenaArray(N_P); 
   v_frag(0) = 1000.0/pmb->pmy_mesh->punit->code_velocity_cgs; // fragmentation velocity for pebble size bin 0 [code_velocity]
-  v_frag(1) = 100.0/pmb->pmy_mesh->punit->code_velocity_cgs; // fragmentation velocity for pebble size bin 1 [code_velocity]
+  v_frag(1) = 500.0/pmb->pmy_mesh->punit->code_velocity_cgs; // fragmentation velocity for pebble size bin 1 [code_velocity]
 
   // Real v1_sil_small = prim_df(4*0+1, 0, 0, 2);
   // Real v2_sil_small = prim_df(4*0+2, 0, 0, 2);

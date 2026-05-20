@@ -14,6 +14,7 @@
 // C headers
 
 // C++ headers
+#include <string>
 
 // Athena++ headers
 #include "../athena.hpp"
@@ -37,7 +38,7 @@ class Relaxation {
       const AthenaArray<Real> &prim_s, const AthenaArray<Real> &bcc,
       AthenaArray<Real> &cons, AthenaArray<Real> &cons_df, AthenaArray<Real> &cons_s, AthenaArray<Real> &v_frag);
 
-  void GetDivisionMasses(Real mmin, Real mmax, AthenaArray<Real> &m_div); 
+  void GetDivisionMasses(Real mmin, Real mmax, AthenaArray<Real> &m_div, std::string mode="log"); 
   AthenaArray<Real> mmax_array;    // maximum mass allowed by fragmentation [code mass]
   AthenaArray<Real> m_p_array;     // the evolved pebble mass array, added for relaxation source term [code mass]
   AthenaArray<Real> m_p0_array;    // initial pebble mass array [g] (used to initialize rho_Np)

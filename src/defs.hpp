@@ -124,11 +124,11 @@
 #define NHYDRO 5
 #define NFIELD 0
 #define NWAVE 5
-#define NDUSTFLUIDS 7    // N dust species
-#define NDUSTVARS (7*4)  // 4*N dust variables
-#define NDUSTGAS  (7+1)  // N dust + 1 gas
+#define NDUSTFLUIDS 10    // N dust species
+#define NDUSTVARS (10*4)  // 4*N dust variables
+#define NDUSTGAS  (10+1)  // N dust + 1 gas
 #define N_P 3                // number of pebble sizes (phase change module)
-#define N_Z 1           // number of compositions per pebble (phase change module)
+#define N_Z 2           // number of compositions per pebble (phase change module)
 #define NSCALARS 0
 #define NSPECIES 0
 #define NGHOST 2

@@ -213,11 +213,11 @@ void RestartOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin, bool force_wr
     }
 
     // PhaseChange arrays (Yu, 2025-11-18)
-    // if (N_Z > 0) {
-    //   std::memcpy(pdata, pmb->pphase_change->rho_Np_array.data(), 
-    //               pmb->pphase_change->rho_Np_array.GetSizeInBytes());
-    //   pdata += pmb->pphase_change->rho_Np_array.GetSizeInBytes();
-    // }
+    if (N_Z > 0) {
+      std::memcpy(pdata, pmb->pphase_change->rho_Np_array.data(), 
+                  pmb->pphase_change->rho_Np_array.GetSizeInBytes());
+      pdata += pmb->pphase_change->rho_Np_array.GetSizeInBytes();
+    }
 
     // [26.03.24]Zhixuan: add the temperature array and m_p_array
     // if (N_P > 0) {

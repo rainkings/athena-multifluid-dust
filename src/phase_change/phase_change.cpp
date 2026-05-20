@@ -54,7 +54,7 @@ PhaseChange::PhaseChange(MeshBlock *pmb, ParameterInput *pin):
   }
   
   // (Yu, 2025-11-18) Store rho_Np_array
-  // rho_Np_array.NewAthenaArray(N_P, pmb->ncells3, pmb->ncells2, pmb->ncells1);
+  rho_Np_array.NewAthenaArray(N_P, pmb->ncells3, pmb->ncells2, pmb->ncells1);
   // m_p0_array.NewAthenaArray(N_P);
   //
   // m_p_array.NewAthenaArray(N_P, pmb->ncells3, pmb->ncells2, pmb->ncells1);
@@ -63,7 +63,7 @@ PhaseChange::PhaseChange(MeshBlock *pmb, ParameterInput *pin):
   P_eq_array.NewAthenaArray(pmb->ncells3, pmb->ncells2, pmb->ncells1);
   
   // Register arrays for restart file I/O (Yu, 2025-11-18)
-  // pmb->RegisterMeshBlockData(rho_Np_array);
+  pmb->RegisterMeshBlockData(rho_Np_array);
 
   // Initialize problem-specific constants from ParameterInput
   Units *punit = pmb->pmy_mesh->punit;
@@ -201,6 +201,8 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
 
         Real fv = rho_v/rho_g;
         Real fv0 = fv;
+        // std::cout << "in phase change" << std::endl;
+        // std::cout <<rho_v << std::endl;
 
         // std::cout << "At (i,j,k)=(" << i << "," << j << "," << k << "):" << std::endl
         //   << "rho_g = " << rho_g << ", rho_v = " << rho_v << std::endl;
@@ -425,15 +427,15 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
               drho_adp = -(x1-x0)/(fx1-fx0)*fx1;
             }
 
-            if(std::isnan(drho_adp) || std::isinf(drho_adp)) {
-              std::cout << "i = " << i << std::endl;
-              std::cout << "drho_adp = " << drho_adp<< std::endl;
-              std::cout << "fx1 = " << fx1 << ", fx0 = " << fx0 << std::endl; 
-              std::cout << "x1 = " << x1 << ", x0 = " << x0 << std::endl;
-              std::cout << "switch to bisection" << std::endl;
-              bisect = true;
-              break;
-            }
+            // if(std::isnan(drho_adp) || std::isinf(drho_adp)) {
+            //   std::cout << "i = " << i << std::endl;
+            //   std::cout << "drho_adp = " << drho_adp<< std::endl;
+            //   std::cout << "fx1 = " << fx1 << ", fx0 = " << fx0 << std::endl; 
+            //   std::cout << "x1 = " << x1 << ", x0 = " << x0 << std::endl;
+            //   std::cout << "switch to bisection" << std::endl;
+            //   bisect = true;
+            //   break;
+            // }
 
             x2 = x1 + drho_adp;
             rho_g1 = rho_g + drho_adp;

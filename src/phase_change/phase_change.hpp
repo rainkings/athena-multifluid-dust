@@ -43,7 +43,7 @@ class PhaseChange {
   PhaseChange(MeshBlock *pmb, ParameterInput *pin);
 
   // Public data arrays
-  // AthenaArray<Real> rho_Np_array;  // pebble number density array [1/cm^3] (Yu, 2025-11-18: replaced m_p_array and s_p_array)
+  AthenaArray<Real> rho_Np_array;  // pebble number density array [1/cm^3] (Yu, 2025-11-18: replaced m_p_array and s_p_array)
   AthenaArray<Real> q_latent;      // latent heat absorption/release rate [code unit]
   // AthenaArray<Real> m_p0_array;    // initial pebble mass array [g] (used to initialize rho_Np)
   AthenaArray<Real> mmax_array;    // maximum mass allowed by fragmentation [code mass]

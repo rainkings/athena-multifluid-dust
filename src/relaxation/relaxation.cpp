@@ -11,6 +11,7 @@
 // C++ headers
 #include <cmath>
 #include <sstream>
+#include <string>
 
 // Athena++ headers
 #include "../athena.hpp"
@@ -64,18 +65,29 @@ Relaxation::Relaxation(MeshBlock *pmb, ParameterInput *pin):
   }
 }
 
-void Relaxation::GetDivisionMasses(Real mmin, Real mmax, AthenaArray<Real> &m_div) {
-  // Input:  mmin, mmax : min and max grain mass [code units]
-  //         N_P        : number of dust bins (>=2)
-  // Output: m_div      : array of size N_P-1 with division masses (sorted ascending)
+void Relaxation::GetDivisionMasses(Real mmin, Real mmax, AthenaArray<Real> &m_div, std::string mode) {
   // Default: logarithmic spacing, i.e., equally spaced in log mass.
   // Override this method in a derived class to implement a different division law.
-  if (N_P <= 1) return;
-  Real log_min = std::log(mmin);
-  Real log_max = std::log(mmax);
-  Real step = (log_max - log_min) / N_P;
-  for (int p = 1; p < N_P; ++p) {
-    m_div(p-1) = std::exp(log_min + p * step);
+  if (mode == "log") {
+    if (N_P <= 1) return;
+    Real log_min = std::log(mmin);
+    Real log_max = std::log(mmax);
+    Real step = (log_max - log_min) / N_P;
+    for (int p = 1; p < N_P; ++p) {
+      m_div(p-1) = std::exp(log_min + p * step);
+    }
+  } else if (mode == "small") {
+    Real mm = mmax;
+    for (int p = 0; p< N_P; ++p) {
+      m_div(p) = std::sqrt(mmin * mm);
+      mm = m_div(p);
+    }
+    // inverse the m_div array to get the division masses from small to large 
+    for (int p = 0; p < N_P/2; ++p) {
+      Real temp = m_div(p);
+      m_div(p) = m_div(N_P - 2 - p);
+      m_div(N_P - 2 - p) = temp;
+    }
   }
 }
 
@@ -395,7 +407,7 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
         //3. Compute division masses between bins
         AthenaArray<Real> m_div;
         m_div.NewAthenaArray(N_P - 1);
-        GetDivisionMasses(mmin, m_max, m_div);   // fill m_div
+        GetDivisionMasses(mmin, m_max, m_div, "small");   // fill m_div
 
         //4. Relaxed distribution (MRN, slope -11/6)
         Real norm = total_dust_mass / (6.0 * (std::pow(m_max, 1.0/6.0) - std::pow(mmin, 1.0/6.0)));
@@ -435,7 +447,7 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
         Real delV = std::sqrt(3.0 * alpha_vis * St1 * cs2);
         // number density of largest bin (volumetric)
         Real rho_Np_vol = cons_df(4 * (N_P*N_Z + 1 + largest_bin), k, j, i) / (std::sqrt(2.0 * PI) * H_gas);
-        Real t_relax = 1.0 / (4.0 * rho_Np_vol * PI * SQR(s_p_array(largest_bin)) * delV) * 100.0;
+        Real t_relax = 1.0 / (4.0 * rho_Np_vol * PI * SQR(s_p_array(largest_bin)) * delV) * 10.0;
         Real relax_rate = dt / t_relax;
         // if (relax_rate > 1.0) relax_rate = 1.0;   // limit to full relaxation
 
