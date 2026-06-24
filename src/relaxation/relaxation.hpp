@@ -52,6 +52,7 @@ class Relaxation {
   
   Real Tem0, r0, Tslope; // do this for the moment [26.04.29]Zhixuan
   Real rho_sil_inter_, rho_ice_inter_, mmin; 
+  Real T_relax_prefactor;
     
 };
 #endif // RELAXATION_RELAXATION_HPP_

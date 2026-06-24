@@ -1082,6 +1082,7 @@ void MyStoppingTime(MeshBlock *pmb, const Real time, const AthenaArray<Real> &pr
             }
             // apply st floor 
             st_time = (st_time > st_floor) ? st_time : st_floor;
+            st_time_n = (st_time_n > st_floor) ? st_time_n : st_floor;
           }
         }
       }
@@ -1413,10 +1414,10 @@ void DiskInnerX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
                 // std::cout << "number density_0 = " << pmb->pphase_change->rho_Np_array(dust_id/N_Z, k, j, 0)  << std::endl;          
                 // std::cout << "number density_1 = " << pmb->pphase_change->rho_Np_array(dust_id/N_Z, k, j, 1)  << std::endl;          
                 // std::cout << "number density_2 = " << pmb->pphase_change->rho_Np_array(dust_id/N_Z, k, j, 2)  << std::endl;          
-              // [26.03.27]Zhixuan: now set the 
                 //[26.03.27]Zhixuan: now set the number density to the number density function in the dustfluids
               //change number density accordingly. 
                 // pmb->pphase_change->rho_Np_array(dust_id/N_Z, k,j,il-i) = pmb->pphase_change->rho_Np_array(dust_id/N_Z, k, j, il);
+              if (dust_id%N_Z == 0 ){
                 int dustn_id = N_P*N_Z + 1 + dust_id; 
                 int n_id = 4*dustn_id;
                 int nv1_id = n_id + 1;
@@ -1427,6 +1428,7 @@ void DiskInnerX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
                 prim_df(nv1_id, k, j, il-i) = prim_df(nv1_id, k, j, il);
                 prim_df(nv2_id, k, j, il-i) = prim_df(nv2_id, k, j, il);
                 prim_df(nv3_id, k, j, il-i) = prim_df(nv3_id, k, j, il);
+                }
 
             }else{
               Real &vapor_sigma_ghost  = prim_df(rho_id, k, j, il-i);
@@ -1754,17 +1756,19 @@ void DiskOuterX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
 
                 //[26.03.27]Zhixuan: now set the number density to the number density function in the dustfluids
                 // rho_Np_ghost = pmb->pphase_change->rho_Np_array(dust_id/N_Z, k, j, iu);
-                int dustn_id = N_P*N_Z + 1 + dust_id/N_Z; 
-                int n_id = 4*dustn_id;
-                int nv1_id = n_id + 1;
-                int nv2_id = n_id + 2;
-                int nv3_id = n_id + 3;
+                if (dust_id%N_Z == 0 ){
+                    int dustn_id = N_P*N_Z + 1 + dust_id/N_Z; 
+                    int n_id = 4*dustn_id;
+                    int nv1_id = n_id + 1;
+                    int nv2_id = n_id + 2;
+                    int nv3_id = n_id + 3;
 
-                prim_df(n_id, k, j, iu+i) = prim_df(n_id, k, j, iu)*SQR(rad_active/rad_ghost);
-                // prim_df(n_id, k, j, iu+i) = dust_sigma_ghost/pmb->pphase_change->m_p_array(dust_id/N_Z, k, j, iu+i);
-                prim_df(nv1_id, k, j, iu+i) = v_drift_peb;
-                prim_df(nv2_id, k, j, iu+i) = vel_dust_phi;
-                prim_df(nv3_id, k, j, iu+i) = 0.0;
+                    prim_df(n_id, k, j, iu+i) = prim_df(n_id, k, j, iu)*SQR(rad_active/rad_ghost);
+                    // prim_df(n_id, k, j, iu+i) = dust_sigma_ghost/pmb->pphase_change->m_p_array(dust_id/N_Z, k, j, iu+i);
+                    prim_df(nv1_id, k, j, iu+i) = v_drift_peb;
+                    prim_df(nv2_id, k, j, iu+i) = vel_dust_phi;
+                    prim_df(nv3_id, k, j, iu+i) = 0.0;
+                }
 
             }else{
                 dust_sigma_ghost = DenProfileCyl_gas(rad_ghost, phi_ghost, z_ghost)*initial_D2G[dust_id]*std::sqrt(2.*PI)*h_gas;

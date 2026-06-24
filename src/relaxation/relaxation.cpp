@@ -33,6 +33,7 @@ Relaxation::Relaxation(MeshBlock *pmb, ParameterInput *pin):
   Tem0 = pin->GetOrAddReal("problem", "Tem0", 150.0);
   r0 = pin->GetOrAddReal("problem", "r0", 3.0);
   Tslope = pin->GetOrAddReal("problem", "Tslope", -0.5);
+  T_relax_prefactor = pin->GetOrAddReal("problem", "T_relax_prefactor", 100.0);
 
   Units *punit = pmb->pmy_mesh->punit;
   Real rho_sil_inter_cgs = pin->GetOrAddReal("problem", "rho_sil_inter", 3.0); // [g/cm^3]
@@ -54,6 +55,7 @@ Relaxation::Relaxation(MeshBlock *pmb, ParameterInput *pin):
     Real m_p0_cgs = pin->GetReal("dust", "m_p0_" + std::to_string(p*N_Z+1)); // [g]
     m_p0_array(p) = m_p0_cgs / punit->code_mass_cgs; // Convert to code units
 
+    // [26.06.02]Zhixuan: This should not be done since when restart, this should not be re-initialized
     // for (int k = 0; k < pmb->ncells3; ++k) {
     //   for (int j = 0; j < pmb->ncells2; ++j) {
     //     for (int i = 0; i < pmb->ncells1; ++i) {
@@ -330,6 +332,8 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
       AthenaArray<Real> &cons, AthenaArray<Real> &cons_df,
       AthenaArray<Real> &cons_s, AthenaArray<Real> &v_frag) {
 
+  //           std::cout << time <<std::endl;
+  // std::cout<< dt <<std::endl;
   for (int k = pmb->ks; k <= pmb->ke; ++k) {
     for (int j = pmb->js; j <= pmb->je; ++j) {
 #pragma omp simd
@@ -366,13 +370,11 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
         //2. Disk properties
         Real rad = pmb->pcoord->x1v(i);
         Real Tem = Tem_gas(rad);
-        Real sigma_g = cons(IDN, k, j, i);
-        Real sigma_v = cons_df(4 * vapor_id, k, j, i);
+        Real rho_g = cons(IDN, k, j, i);
+        Real rho_v = cons_df(4 * vapor_id, k, j, i);
         Real OmegaK = std::sqrt(gm0 / std::pow(rad, 3));
-        Real fv = sigma_v / sigma_g;
+        Real fv = rho_v / rho_g;
         Real cs2 = Tem / KELVIN * Get_mu(fv);
-        Real H_gas = std::sqrt(cs2) / OmegaK;
-        Real rho_g = sigma_g / (std::sqrt(2.0 * PI) * H_gas);
         Real vth = std::sqrt(8.0 / PI * cs2);
 
         // total dust mass (excluding vapor and number densities)
@@ -389,20 +391,39 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
           comp_ratio(1) = 1.0 - comp_ratio(0);
         }
 
-        // internal density for relaxation (mass-weighted average)
-        Real rho_inte_relax = (rho_sil_inter_ * rho_sil + rho_ice_inter_ * rho_ice) /
-                              (rho_sil + rho_ice + 1e-30);
+        Real rho_total = rho_sil + rho_ice; // avoid division by zero
+        Real f_ice = rho_ice / rho_total;
+        Real f_sil = rho_sil / rho_total;
+        
+        // Calculate effective internal density (harmonic mean of ice and silicate densities)
+        Real rho_inte_relax = rho_ice_inter_ * rho_sil_inter_ / 
+                           (f_ice * rho_sil_inter_ + f_sil * rho_ice_inter_);
 
         // maximum grain mass (fragmentation limit)
-        Real v_frag_tot = (v_frag(1) * rho_sil + v_frag(0) * rho_ice) / (rho_sil + rho_ice + 1e-30);
-        Real s_max = SQR(v_frag_tot) / cs2 * rho_g * vth / (3.0 * alpha_vis * OmegaK * rho_inte_relax);
-        Real m_max = FOUR_3RD * PI * SQR(s_max) * s_max * rho_inte_relax;
+        Real v_frag_tot = (v_frag(1) * rho_sil + v_frag(0) * rho_ice) / (rho_sil + rho_ice);
+        Real St = SQR(v_frag_tot)/cs2/3.0/alpha_vis;
+        Real s_max = St* rho_g * vth / (OmegaK * rho_inte_relax);
+        Real m_max = FOUR_3RD * PI * SQR(s_max)*s_max * rho_inte_relax;
         mmax_array(k, j, i) = m_max;
 
         AthenaArray<Real> rho_comps, s_p_array;
         s_p_array.NewAthenaArray(N_P);
         for (int p = 0; p < N_P; ++p) {
-          s_p_array(p) = std::pow(m_p_array(p,k,j,i)/(FOUR_3RD*PI*rho_inte_relax), ONE_3RD); // [code_length]
+          Real &m_p = m_p_array(p, k, j, i);
+
+          if (m_p== 0.0){
+            //[26.06.04]Zhixuan: if restart, since the m_p_array is not registered to a restart property, so it will be 0, and we can get it by the density and number density 
+            Real rho_pop = 0.0;
+            for (int zi = 0; zi < N_Z; ++zi) {
+              int dust_id = N_Z*p + zi;
+              rho_pop += cons_df(4*dust_id, k, j, i); // total density for population p
+            }
+            int n_id = 4*(N_Z*N_P + 1 + p);
+            Real n_pop = cons_df(n_id, k, j, i);
+            m_p = rho_pop / (n_pop);
+          }
+
+          s_p_array(p) = std::pow(m_p/(FOUR_3RD*PI*rho_inte_relax), ONE_3RD); // [code_length]
         }
         //3. Compute division masses between bins
         AthenaArray<Real> m_div;
@@ -410,7 +431,7 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
         GetDivisionMasses(mmin, m_max, m_div, "small");   // fill m_div
 
         //4. Relaxed distribution (MRN, slope -11/6)
-        Real norm = total_dust_mass / (6.0 * (std::pow(m_max, 1.0/6.0) - std::pow(mmin, 1.0/6.0)));
+        Real c_relax = total_dust_mass / (6.0 * (std::pow(m_max, 1.0/6.0) - std::pow(mmin, 1.0/6.0)));
         AthenaArray<Real> M1_relax, M2_relax, n_relax, rho_pop_relax;
         M1_relax.NewAthenaArray(N_P);
         M2_relax.NewAthenaArray(N_P);
@@ -429,11 +450,11 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
             m_low = m_div(p - 1);
             m_high = m_div(p);
           }
-          // First moment: ∫ m f*(m) dm = norm * 6 * (m_high^{1/6} - m_low^{1/6})
-          M1_relax(p) = norm * 6.0 * (std::pow(m_high, 1.0/6.0) - std::pow(m_low, 1.0/6.0));
-          // Second moment: ∫ m^2 f*(m) dm = norm * (6/7) * (m_high^{7/6} - m_low^{7/6})
-          M2_relax(p) = norm * (6.0/7.0) * (std::pow(m_high, 7.0/6.0) - std::pow(m_low, 7.0/6.0));
-          // number density (monodisperse approximation within each bin)
+          // First moment: ∫ m f*(m) dm = c_relax * 6 * (m_high^{1/6} - m_low^{1/6})
+          M1_relax(p) = c_relax * 6.0 * (std::pow(m_high, 1.0/6.0) - std::pow(m_low, 1.0/6.0));
+          // Second moment: ∫ m^2 f*(m) dm = c_relax * (6/7) * (m_high^{7/6} - m_low^{7/6})
+          M2_relax(p) = c_relax * (6.0/7.0) * (std::pow(m_high, 7.0/6.0) - std::pow(m_low, 7.0/6.0));
+          // number density ('monodisperse' approximation)
           // [26.05.17]Zhixuan: The M2 can be very small b/c of the mass integration, so here we shouldn't 
           //                  add the 1.e-30 factor, which was a bug here...
           n_relax(p) = SQR(M1_relax(p)) / (M2_relax(p));
@@ -446,8 +467,8 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
         Real St1 = t_stop * OmegaK;
         Real delV = std::sqrt(3.0 * alpha_vis * St1 * cs2);
         // number density of largest bin (volumetric)
-        Real rho_Np_vol = cons_df(4 * (N_P*N_Z + 1 + largest_bin), k, j, i) / (std::sqrt(2.0 * PI) * H_gas);
-        Real t_relax = 1.0 / (4.0 * rho_Np_vol * PI * SQR(s_p_array(largest_bin)) * delV) * 10.0;
+        Real rho_Np_vol = cons_df(4 * (N_P*N_Z + 1 + largest_bin), k, j, i);
+        Real t_relax = 1.0 / (4.0 * rho_Np_vol * PI * SQR(s_p_array(largest_bin)) * delV) * T_relax_prefactor;
         Real relax_rate = dt / t_relax;
         // if (relax_rate > 1.0) relax_rate = 1.0;   // limit to full relaxation
 
@@ -472,6 +493,26 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
             cons_df(4*dust_id+2, k, j, i) = rho_new_val * v2s(dust_id);
             cons_df(4*dust_id+3, k, j, i) = rho_new_val * v3s(dust_id);
 
+            //check for NaN values in the updated density
+            if (std::isnan(rho_new_val) || std::isnan(v1s(dust_id)) || std::isnan(v2s(dust_id)) || std::isnan(v3s(dust_id))) {
+              int dk     = NGHOST;
+              int dj     = NGHOST;
+              if (pmb->block_size.nx3 == 1) dk = 0;
+              if (pmb->block_size.nx2 == 1) dj = 0;
+              int kl = pmb->ks - dk;     int ku = pmb->ke + dk;
+              int jl = pmb->js - dj;     int ju = pmb->je + dj;
+              int il = pmb->is - NGHOST; int iu = pmb->ie + NGHOST;
+              int ti = static_cast<int>(pmb->loc.lx1)*pmb->block_size.nx1+(i-il);
+              int tj = static_cast<int>(pmb->loc.lx2)*pmb->block_size.nx2+(j-jl);
+              int tk = static_cast<int>(pmb->loc.lx3)*pmb->block_size.nx3+(k-kl);
+              std::cout << "### WARNING: NaN velocity for dust_id " << dust_id 
+                        << " at cell (" << tk << "," << tj << "," << ti << ")" << std::endl;
+              std::cout << "rho_target: " << rho_target << " rho_current: " << rho_current 
+                        << " rho_new_val: " << rho_new_val << std::endl;
+              std::cout << "v1: " << v1s(dust_id) << " v2: " << v2s(dust_id) << " v3: " << v3s(dust_id) << std::endl;
+
+            }
+
             rho_pop_new += rho_new_val;
 
             // std::cout << "Relaxation: bin " << p << " zi " << zi << " rho_target " << rho_target 
@@ -479,13 +520,34 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
           }
 
           int n_id = N_Z * N_P + 1 + p;
+          int dust_id = N_Z*p;
           Real n_target = n_relax(p);
           Real n_current = cons_df(4*n_id, k, j, i);
           Real n_new_val = n_current + relax_rate * (n_target - n_current);
           cons_df(4*n_id, k, j, i) = n_new_val;
+          //[26.06.09]Zhixuan: this will somehow lead to the decrease of time step, no idea why
+          cons_df(4*n_id+1, k, j, i) = n_new_val * v1s(dust_id);
+          cons_df(4*n_id+2, k, j, i) = n_new_val * v2s(dust_id);
+          cons_df(4*n_id+3, k, j, i) = n_new_val * v3s(dust_id);
           ns_new(p) = n_new_val;
           // std::cout << "Relaxation: bin " << p << " n_target " << n_target 
           //           << " n_current " << n_current << " n_new " << n_new_val << std::endl;
+          if (std::isnan(n_new_val)) {
+            int dk     = NGHOST;
+            int dj     = NGHOST;
+            if (pmb->block_size.nx3 == 1) dk = 0;
+            if (pmb->block_size.nx2 == 1) dj = 0;
+            int kl = pmb->ks - dk;     int ku = pmb->ke + dk;
+            int jl = pmb->js - dj;     int ju = pmb->je + dj;
+            int il = pmb->is - NGHOST; int iu = pmb->ie + NGHOST;
+            int ti = static_cast<int>(pmb->loc.lx1)*pmb->block_size.nx1+(i-il);
+            int tj = static_cast<int>(pmb->loc.lx2)*pmb->block_size.nx2+(j-jl);
+            int tk = static_cast<int>(pmb->loc.lx3)*pmb->block_size.nx3+(k-kl);
+            std::cout << "### WARNING: NaN number density for bin " << p 
+                      << " at cell (" << tk << "," << tj << "," << ti << ")" << std::endl;
+            std::cout << "n_target: " << n_target << " n_current: " << n_current 
+                      << " n_new_val: " << n_new_val << std::endl;
+          }
 
           m_p_array(p,k,j,i) = rho_pop_new / ns_new(p); // update characteristic mass for this bin 
         }

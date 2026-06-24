@@ -49,7 +49,8 @@ Real DustFluids::NewAdvectionDt() {
   Real min_dt_hyperbolic_df = real_max;
 
   FluidFormulation fluid_status = pmb->pmy_mesh->fluid_setup;
-  for (int n=0; n<NDUSTFLUIDS; ++n) {
+  //[26.06.13]Zhixuan: change this to NP*NZ +1, so that the number density will not influence the timestep
+  for (int n=0; n<N_P*N_Z+1; ++n) {
     int dust_id = n;
     int rho_id  = 4*dust_id;
     int v1_id   = rho_id + 1;
@@ -83,6 +84,14 @@ Real DustFluids::NewAdvectionDt() {
         for (int i=is; i<=ie; ++i) {
           Real& dt_1 = dt1(i);
           min_dt_hyperbolic_df = std::min(min_dt_hyperbolic_df, dt_1);
+          if (min_dt_hyperbolic_df <=1.e-3) {
+            int ti = static_cast<int>(pmb->loc.lx1)*pmb->block_size.nx1+(i-pmb->is)+ NGHOST;
+            int tj = static_cast<int>(pmb->loc.lx2)*pmb->block_size.nx2+(j-pmb->js)+ NGHOST;
+            std::cout << "min_dt_hyperbolic_df = " << min_dt_hyperbolic_df << std::endl;
+            std::cout << "dust_id = " << dust_id << std::endl;
+            std::cout << "k = " << k << ", j = " << j << ", i = " << i << std::endl;
+            quick_exit(1);
+          }
         }
 
         // if grid is 2D/3D, compute minimum of (v2 +/- C)
@@ -90,6 +99,12 @@ Real DustFluids::NewAdvectionDt() {
           for (int i=is; i<=ie; ++i) {
             Real& dt_2 = dt2(i);
             min_dt_hyperbolic_df = std::min(min_dt_hyperbolic_df, dt_2);
+            if (min_dt_hyperbolic_df <=1.e-3) {
+              std::cout << "min_dt_hyperbolic_df = " << min_dt_hyperbolic_df << std::endl;
+              std::cout << "dust_id = " << dust_id << std::endl;
+              std::cout << "k = " << k << ", j = " << j << ", i = " << i << std::endl;
+              quick_exit(1);
+            }
           }
         }
 

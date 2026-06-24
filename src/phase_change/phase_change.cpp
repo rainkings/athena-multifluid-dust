@@ -282,6 +282,13 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
           Real m_p = Get_m_p_from_rho_Np(rho_comps, rho_Np_p); // [code_mass]
           Real s_p = Get_s_p_from_m_p(m_p, rho_comps); // [code_length]
           s_p_array(p) = s_p;
+          if (std::isnan(s_p)){
+            std::stringstream msg;
+            msg << "### FATAL ERROR in PhaseChange::PhaseChangeSource" << std::endl
+                << "NaN detected: s_p = " << s_p << ", m_p = " << m_p
+                << ", rho_Np_p = " << rho_Np_p << std::endl;
+            ATHENA_ERROR(msg);
+          }
           
           drhodt_ice_arr(p) = GetSublimationRate(Tem, rho_v, s_p, rho_Np_p);
         }
@@ -531,6 +538,7 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
           std::stringstream msg;
           msg << "### FATAL ERROR in PhaseChange::PhaseChangeSource" << std::endl
               << "fv= nan" << std::endl;
+          ATHENA_ERROR(msg);
         }
         gamma = pmb->peos->calc_gamma(fv);
 
