@@ -42,6 +42,7 @@ Relaxation::Relaxation(MeshBlock *pmb, ParameterInput *pin):
   rho_ice_inter_ = rho_ice_inter_cgs / punit->code_density_cgs; // Convert to code units
     //
   mmax_array.NewAthenaArray(pmb->ncells3, pmb->ncells2, pmb->ncells1);
+  t_relax.NewAthenaArray(pmb->ncells3, pmb->ncells2, pmb->ncells1);
   m_p_array.NewAthenaArray(N_P, pmb->ncells3, pmb->ncells2, pmb->ncells1);
   m_p0_array.NewAthenaArray(N_P);
 
@@ -423,7 +424,27 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
             m_p = rho_pop / (n_pop);
           }
 
-          s_p_array(p) = std::pow(m_p/(FOUR_3RD*PI*rho_inte_relax), ONE_3RD); // [code_length]
+          //get internal density for this pop 
+          AthenaArray<Real> rho_comp_pop;
+          rho_comp_pop.NewAthenaArray(N_Z);
+          for (int zi = 0; zi < N_Z; ++zi) {
+            int dust_id = N_Z*p + zi;
+            rho_comp_pop(zi) = cons_df(4*dust_id, k, j, i);
+          }
+          Real rho_inte_pop = 0.0;
+          if (N_Z == 1) {
+            rho_inte_pop = rho_sil_inter_;
+          } else {
+            Real f_ice_pop = rho_comp_pop(0) / (rho_comp_pop(0) + rho_comp_pop(1) + 1e-30);
+            Real f_sil_pop = rho_comp_pop(1) / (rho_comp_pop(0) + rho_comp_pop(1) + 1e-30);
+            rho_inte_pop = rho_ice_inter_ * rho_sil_inter_ / 
+                           (f_ice_pop * rho_sil_inter_ + f_sil_pop * rho_ice_inter_);
+          }
+          s_p_array(p) = std::pow(m_p/(FOUR_3RD*PI*rho_inte_pop), ONE_3RD); // [code_length]
+          
+          if (std::isnan(s_p_array(p))) {
+            std::cout << "Error: s_p_array(" << p << ") is NaN at cell (" << k << "," << j << "," << i << ")" << std::endl;
+          }
         }
         //3. Compute division masses between bins
         AthenaArray<Real> m_div;
@@ -468,9 +489,11 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
         Real delV = std::sqrt(3.0 * alpha_vis * St1 * cs2);
         // number density of largest bin (volumetric)
         Real rho_Np_vol = cons_df(4 * (N_P*N_Z + 1 + largest_bin), k, j, i);
-        Real t_relax = 1.0 / (4.0 * rho_Np_vol * PI * SQR(s_p_array(largest_bin)) * delV) * T_relax_prefactor;
-        Real relax_rate = dt / t_relax;
-        // if (relax_rate > 1.0) relax_rate = 1.0;   // limit to full relaxation
+        Real trelax = 1.0 / (4.0 * rho_Np_vol * PI * SQR(s_p_array(largest_bin)) * delV) * T_relax_prefactor;
+        t_relax(k,j,i) = trelax; // store for diagnostics
+        Real relax_rate = dt / trelax;
+        // [26.06.24]Zhixuan: Not an elegent way ...
+        if (relax_rate > 1.0) relax_rate = 1.0;   // limit to full relaxation
 
         //6. Perform relaxation for each dust fluid and number density
         AthenaArray<Real> rho_new, ns_new;
@@ -494,7 +517,7 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
             cons_df(4*dust_id+3, k, j, i) = rho_new_val * v3s(dust_id);
 
             //check for NaN values in the updated density
-            if (std::isnan(rho_new_val) || std::isnan(v1s(dust_id)) || std::isnan(v2s(dust_id)) || std::isnan(v3s(dust_id))) {
+            if (std::isnan(rho_new_val) ||rho_new_val<=0.0 || std::isnan(v1s(dust_id)) || std::isnan(v2s(dust_id)) || std::isnan(v3s(dust_id))) {
               int dk     = NGHOST;
               int dj     = NGHOST;
               if (pmb->block_size.nx3 == 1) dk = 0;
@@ -510,7 +533,6 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
               std::cout << "rho_target: " << rho_target << " rho_current: " << rho_current 
                         << " rho_new_val: " << rho_new_val << std::endl;
               std::cout << "v1: " << v1s(dust_id) << " v2: " << v2s(dust_id) << " v3: " << v3s(dust_id) << std::endl;
-
             }
 
             rho_pop_new += rho_new_val;
@@ -532,7 +554,7 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
           ns_new(p) = n_new_val;
           // std::cout << "Relaxation: bin " << p << " n_target " << n_target 
           //           << " n_current " << n_current << " n_new " << n_new_val << std::endl;
-          if (std::isnan(n_new_val)) {
+          if (std::isnan(n_new_val) || n_new_val <= 0.0) {
             int dk     = NGHOST;
             int dj     = NGHOST;
             if (pmb->block_size.nx3 == 1) dk = 0;

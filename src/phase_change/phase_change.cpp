@@ -400,7 +400,22 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
         phase_trans(rhoe1, rho_g1, rho_d_array1, rho_v1, drho);
         fx1 = drho;
         x1 = rho_v1;
+        // if (rho_d_array(0)<=0.0 || rho_d_array(1)<=0.0) {
+        //   std::cout << "rho_d_array(0) = " << rho_d_array(0) << ", rho_d_array(1) = " << rho_d_array(1) << std::endl;
+        //   std::cout << "drho_limit = " << drho_limit << std::endl;
+        //   std::cout << "drho_d_ratio_array(0) = " << drho_d_ratio_array(0) << ", drho_d_ratio_array(1) = " << drho_d_ratio_array(1) << std::endl;
+        //   std::cout << "rho_g = " << rho_g << ", rho_v = " << rho_v << std::endl;
+        //   std::stringstream msg;
+        //   msg << "### FATAL ERROR in PhaseChange::PhaseChangeSource" << std::endl
+        //       << "rho_d_array <= 0.0 after initial phase change." 
+        //       << std::endl;
+        //   ATHENA_ERROR(msg);
+        // }
 
+        // std::cout << "========================================" << std::endl;
+        // std::cout << "At (i,j,k)=(" << i << "," << j << "," << k << "):" << std::endl;
+        // std::cout << "Before relaxation: " << std::endl;
+        // std::cout << "rho_d_array(0) = " << rho_d_array(0) << ", rho_d_array(1) = " << rho_d_array(1) << std::endl;
         // Store initial values for bisection
         Real rho_left = rho_v;
         Real rho_right = rho_v1;
@@ -429,20 +444,25 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
               break;
             }
             
-            drho_adp = -fx1/(fx1-fx0)*(x1-x0); // exchange the order of multiplication
-            if(std::isnan(drho_adp) || std::isinf(drho_adp)) {
-              drho_adp = -(x1-x0)/(fx1-fx0)*fx1;
+            if (fx1 == fx0 || std::isinf(fx1) || std::isinf(fx0)) {
+              drho_adp = 0.0;
+            } else {
+              drho_adp = -fx1/(fx1-fx0)*(x1-x0); // exchange the order of multiplication
+              if(std::isnan(drho_adp) || std::isinf(drho_adp)) {
+                drho_adp = -(x1-x0)/(fx1-fx0)*fx1;
+              }
             }
-
-            // if(std::isnan(drho_adp) || std::isinf(drho_adp)) {
-            //   std::cout << "i = " << i << std::endl;
-            //   std::cout << "drho_adp = " << drho_adp<< std::endl;
-            //   std::cout << "fx1 = " << fx1 << ", fx0 = " << fx0 << std::endl; 
-            //   std::cout << "x1 = " << x1 << ", x0 = " << x0 << std::endl;
-            //   std::cout << "switch to bisection" << std::endl;
-            //   bisect = true;
-            //   break;
-            // }
+            if(std::isnan(drho_adp) || std::isinf(drho_adp)) {
+              std::cout << "i = " << i << std::endl;
+              std::cout << "j = " << j << std::endl;
+              std::cout << "nite = " << nite << std::endl;
+              std::cout << "drho_adp = " << drho_adp<< std::endl;
+              std::cout << "fx1 = " << fx1 << ", fx0 = " << fx0 << std::endl; 
+              std::cout << "x1 = " << x1 << ", x0 = " << x0 << std::endl;
+              std::cout << "switch to bisection" << std::endl;
+              bisect = true;
+              break;
+            }
 
             x2 = x1 + drho_adp;
             rho_g1 = rho_g + drho_adp;
@@ -451,6 +471,10 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
             for (int p = 0; p < N_P; ++p) {
               rho_d_array1(p) = rho_d_array(p) - drho_adp*drho_d_ratio_array(p);
             }
+            // std::cout << "nite = " << nite << ", drho_adp = " << drho_adp << 
+            //   "rho_d_array(0) = " << rho_d_array1(0) << ", rho_d_array(1) = " << rho_d_array1(1) <<
+            //   "bisect = " << bisect <<
+            //   std::endl;
             // update rhoe
             rhoe1 = Get_rhoe(rhoE_total, rho_g1, E_kg, rho_d_array1, E_kd_array);
             phase_trans(rhoe1, rho_g1, rho_d_array1, rho_v1, drho);
@@ -464,68 +488,43 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
             rho_g = rho_g1;
             rho_v = rho_v1;
             rho_d_array = rho_d_array1;
+            // if(rho_d_array(0) <=0.0 || rho_d_array(1) <=0.0) {
+            //   std::cout << "rho_d_array(0) = " << rho_d_array(0) << ", rho_d_array(1) = " << rho_d_array(1) << std::endl;
+            //   std::cout << "drho_adp = " << drho_adp << std::endl;
+            //   std::cout << "drho_d_ratio_array(0) = " << drho_d_ratio_array(0) << ", drho_d_ratio_array(1) = " << drho_d_ratio_array(1) << std::endl;
+            //   std::cout << "rho_g = " << rho_g << ", rho_v = " << rho_v << std::endl;
+            //   std::stringstream msg;
+            //   msg << "### FATAL ERROR in PhaseChange::PhaseChangeSource" << std::endl
+            //       << "rho_d_array <= 0.0 during secant iteration." 
+            //       << std::endl;
+            //   ATHENA_ERROR(msg);
+            // }
             gas_vel_array = gas_vel_array1;
             // secant method root error fraction:
             f_err = std::fabs(drho)/rho_v;
           }
           
-          if(bisect) {
-            // Bisection method fallback
-            Real rho_mid;
-            rho_g = rho_g0;
-            rho_v = rho_v0;
-            rho_d_array = rho_d_array0;
-            gas_vel_array = gas_vel_array0;
-            
-            f_err = 1.0;
-            nite = 0;
-
-            while(f_err > min_tol_) {
-              nite += 1;
-              if(nite > 1000) {
-                std::stringstream msg;
-                msg << "### FATAL ERROR in PhaseChange::PhaseChangeSource" << std::endl
-                    << "Bisection iteration > 1000" << std::endl;
-                ATHENA_ERROR(msg);
-              }
-              
-              rho_mid = (rho_left + rho_right)/2.0;
-              drho_adp = rho_mid - rho_v;
-
-              rho_g1 = rho_g + drho_adp;
-              rho_v1 = rho_v + drho_adp;
-              
-              for (int p = 0; p < N_P; ++p) {
-                rho_d_array1(p) = rho_d_array(p) - drho_adp*drho_d_ratio_array(p);
-              }
-              
-              rhoe1 = Get_rhoe(rhoE_total, rho_g1, E_kg, rho_d_array1, E_kd_array);
-              phase_trans(rhoe1, rho_g1, rho_d_array1, rho_v1, drho);
-              
-              if((drho*sign) > 0.) {
-                rho_left = rho_v1;
-              } else {
-                rho_right = rho_v1;
-              }
-
-              rho_g = rho_g1;
-              rho_v = rho_v1;
-              rho_d_array = rho_d_array1;
-              gas_vel_array = gas_vel_array1;
-              // bisection root error fraction
-              f_err = std::fabs(drho)/rho_v;
-            }
-          }
         }
 
         // Calculate latent heat absorption/release rate
         q_latent(k,j,i) += -(rho_v - rho_v0)/(pmb->pmy_mesh->dt) * L_heat;
 
+        // std::cout << "After relaxation: " << std::endl;
+        // std::cout << "rho_d_array(0) = " << rho_d_array(0) << ", rho_d_array(1) = " << rho_d_array(1) << std::endl;
         // Update ice densities for all pebble sizes
         for (int p = 0; p < N_P; ++p) {
           int ice_id = N_Z * p;      // ice composition (z=0)
           int rho_id = 4*ice_id;
           cons_df(rho_id, k, j, i) = rho_d_array(p);
+          if (rho_d_array(p) <= 0.0) {
+            std::cout << "### WARNING in PhaseChange::PhaseChangeSource" << std::endl
+                << "rho_d_array(" << p << ") <= 0.0 at (i,j,k)=(" << i << "," << j << "," << k << ")" 
+                << ", rho_d_array(" << p << ") = " << rho_d_array(p) 
+                << std::endl;
+            Real rad=std::abs(pmb->pcoord->x1v(i)*std::sin(pmb->pcoord->x2v(j)));
+            Real z=pmb->pcoord->x1v(i)*std::cos(pmb->pcoord->x2v(j));
+            Real phi=pmb->pcoord->x3v(k);
+          }
         }
 
         // Calculate pressure
@@ -536,8 +535,9 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
         Real gamma;
         if (std::isnan(fv)){
           std::stringstream msg;
-          msg << "### FATAL ERROR in PhaseChange::PhaseChangeSource" << std::endl
-              << "fv= nan" << std::endl;
+          std::cout << "### FATAL ERROR in PhaseChange::PhaseChangeSource" << std::endl
+              << "fv= nan" << "rho_v=" << rho_v << "rho_g=" << rho_g <<
+            std::endl;
           ATHENA_ERROR(msg);
         }
         gamma = pmb->peos->calc_gamma(fv);

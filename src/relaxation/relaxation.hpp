@@ -40,6 +40,7 @@ class Relaxation {
 
   void GetDivisionMasses(Real mmin, Real mmax, AthenaArray<Real> &m_div, std::string mode="log"); 
   AthenaArray<Real> mmax_array;    // maximum mass allowed by fragmentation [code mass]
+  AthenaArray<Real> t_relax;    // maximum mass allowed by fragmentation [code mass]
   AthenaArray<Real> m_p_array;     // the evolved pebble mass array, added for relaxation source term [code mass]
   AthenaArray<Real> m_p0_array;    // initial pebble mass array [g] (used to initialize rho_Np)
   Real Tem_gas(const Real rad); 

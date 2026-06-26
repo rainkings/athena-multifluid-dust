@@ -393,7 +393,7 @@ void MeshBlock::InitUserMeshBlockData(ParameterInput *pin){
     }
   }
   
-  AllocateUserOutputVariables(7*N_P + 3 + 8 + 4);
+  AllocateUserOutputVariables(7*N_P + 3 + 8 + 5);
   // Firstly, we output the variables related to non-tracer dustfluids 
   const std::vector<std::pair<int,const char*>> dustProp = {
     {0,  "st"},
@@ -440,6 +440,7 @@ void MeshBlock::InitUserMeshBlockData(ParameterInput *pin){
   SetUserOutputVariableName(27, "drho_v_dt");
 
   SetUserOutputVariableName(28, "mmax");
+  SetUserOutputVariableName(29, "t_relax");
   // SetUserOutputVariableName(0,"Tem");
   // SetUserOutputVariableName(4,"q_latent");
   // SetUserOutputVariableName(5,"q_z");
@@ -1433,12 +1434,11 @@ void MeshBlock::UserWorkInLoop(){
                     rho_comps(z) = pdustfluids->df_u(4*dust_rho_id, k, j, i);
                   }
 
-                  // update rho_Np for pebble p
                   int dustn_id = 4*(N_P*N_Z + 1 + p);
                   Real &rho_Np_p = pdustfluids->df_u(dustn_id, k, j, i); // number density of the pebble 
                   Real rho_refrac = rho_comps(rho_comps.GetDim1() - 1); // refractory (always the last one)
 
-                  // Derive m_p and s_p from rho_Np and current densities (Yu, 2025-11-18)
+                  // Derive m_p and s_p from rho_Np and current densities 
                   Real &m_p = prelax->m_p_array(p, k, j, i);
                   // if (rho_refrac > dffloor and rho_Np_p > dffloor){
                     if (N_Z >= 2){
@@ -1446,6 +1446,17 @@ void MeshBlock::UserWorkInLoop(){
                     } else{
                         m_p = rho_refrac/rho_Np_p; // if only one composition, directly derive mass from density and number density
                     }
+                  if (m_p<=0.0){
+                    std::cout << "m_p = " << m_p << std::endl;
+                    std::cout << "rho_Np_p = " << rho_Np_p << std::endl;
+                    std::cout << "rho_refrac = " << rho_refrac << std::endl;
+                    std::cout << "rho_comps = ";
+                    for (int z=0; z<N_Z; ++z) {
+                      std::cout << rho_comps(z) << " ";
+                    }
+                    std::cout << std::endl;
+                    quick_exit(1);
+                  }
                   // } else {
                   //   m_p = prelax->m_p0_array(p); // fallback to initial mass if density or number density is too low
                   // }
@@ -1532,6 +1543,7 @@ void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin){
             user_out_var(p*7+6,k,j,i) = pdustfluids->df_flux[X2DIR](4*(p*N_Z + 1),k,j,i);
           }
           user_out_var(28,k,j,i) = prelax->mmax_array(k, j, i)*punit->code_mass_cgs; // maximum pebble mass in the cell [code_mass]
+          user_out_var(29,k,j,i) = prelax->t_relax(k, j, i)*punit->code_time_cgs; // maximum pebble mass in the cell [code_mass]
         }
         // user_out_var(4,k,j,i) = pdustfluids->dfv_dt(k,j,i);
         
@@ -1582,6 +1594,54 @@ void MySource(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<
   LocalIsothermalEOS(pmb, time, dt, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s);
   if(N_Z > 1 and time > t_iterate and PhaseChange_Flag){  // (Yu, 2025-11-16)
     // Record the density of ices before phase change 
+    // AthenaArray<Real> rho_i, rho_i1, rho_v;
+    // int si, sj, sk; 
+    // si = cons_df.GetDim1(); 
+    // sj = cons_df.GetDim2(); 
+    // sk = cons_df.GetDim3();
+
+//     rho_i.NewAthenaArray(sk, sj, si);
+//     rho_i1.NewAthenaArray(sk, sj, si);
+//     rho_v.NewAthenaArray(sk, sj, si);
+//
+//     for (int k=pmb->ks; k<=pmb->ke; ++k) {
+//       for (int j=pmb->js; j<=pmb->je; ++j) {
+// #pragma omp simd
+//         for (int i=pmb->is; i<=pmb->ie; ++i) {
+//             rho_i(k,j,i) = cons_df(0,k,j,i); // ice for pebble size bin 0 
+//             rho_i1(k,j,i) = cons_df(4*2,k,j,i); // ice for pebble size bin 1 
+//             rho_v(k,j,i) = cons_df(4*4,k,j,i); // vapor
+//           //
+//             if (rho_i(k,j,i) < 0.0 or rho_i1(k,j,i) < 0.0 or rho_v(k,j,i) < 0.0){
+//               // std::cout << "rho_i = " << rho_i(k,j,i) << std::endl;
+//               // std::cout << "rho_i1 = " << rho_i1(k,j,i) << std::endl;
+//               // std::cout << "rho_v = " << rho_v(k,j,i) << std::endl;
+//               // std::cout << "i, j, k = " << i << ", " << j << ", " << k << std::endl;
+//             }
+//           }
+//         }
+//       }
+
+    pmb->pphase_change->PhaseChangeSource(pmb, time, dt, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s);
+
+
+//     for (int k=pmb->ks; k<=pmb->ke; ++k) {
+//       for (int j=pmb->js; j<=pmb->je; ++j) {
+// #pragma omp simd
+//         for (int i=pmb->is; i<=pmb->ie; ++i) {
+//             pmb->user_out_var(25,k,j,i) = (cons_df(0,k,j,i) - rho_i(k,j,i)) / dt;
+//             pmb->user_out_var(26,k,j,i) = (cons_df(4*2,k,j,i) - rho_i1(k,j,i)) / dt;
+//             pmb->user_out_var(27,k,j,i) = (cons_df(4*4,k,j,i) - rho_v(k,j,i)) / dt;
+//           }
+//         }
+//       }
+  }
+  AthenaArray<Real> v_frag;
+  v_frag.NewAthenaArray(N_P); 
+  v_frag(0) = 1000.0/pmb->pmy_mesh->punit->code_velocity_cgs; // fragmentation velocity for pebble size bin 0 [code_velocity]
+  v_frag(1) = 100.0/pmb->pmy_mesh->punit->code_velocity_cgs; // fragmentation velocity for pebble size bin 1 [code_velocity]
+  if (N_P > 0 and time > t_iterate and Relaxation_Flag){
+    // Record the density of ices before phase change 
     AthenaArray<Real> rho_i, rho_i1, rho_v;
     int si, sj, sk; 
     si = cons_df.GetDim1(); 
@@ -1596,33 +1656,26 @@ void MySource(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<
       for (int j=pmb->js; j<=pmb->je; ++j) {
 #pragma omp simd
         for (int i=pmb->is; i<=pmb->ie; ++i) {
-            rho_i(k,j,i) = cons_df(0,k,j,i); // ice for pebble size bin 0 
-            rho_i1(k,j,i) = cons_df(4*2,k,j,i); // ice for pebble size bin 1 
+            rho_i(k,j,i) = cons_df(0,k,j,i) + cons_df(4,k,j,i); // ice for pebble size bin 0 
+            rho_i1(k,j,i) = cons_df(4*2,k,j,i) + cons_df(4*3,k,j,i); // ice for pebble size bin 1 
             rho_v(k,j,i) = cons_df(4*4,k,j,i); // vapor
+          //
           }
         }
       }
 
-    pmb->pphase_change->PhaseChangeSource(pmb, time, dt, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s);
-
+    pmb->prelax->RelaxationSource(pmb, time, dt, gm0, alpha_vis, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s, v_frag);
 
     for (int k=pmb->ks; k<=pmb->ke; ++k) {
       for (int j=pmb->js; j<=pmb->je; ++j) {
 #pragma omp simd
         for (int i=pmb->is; i<=pmb->ie; ++i) {
-            pmb->user_out_var(25,k,j,i) = (cons_df(0,k,j,i) - rho_i(k,j,i)) / dt;
-            pmb->user_out_var(26,k,j,i) = (cons_df(4*2,k,j,i) - rho_i1(k,j,i)) / dt;
+            pmb->user_out_var(25,k,j,i) = (cons_df(0,k,j,i)+cons_df(4,k,j,i) - rho_i(k,j,i)) / dt;
+            pmb->user_out_var(26,k,j,i) = (cons_df(4*2,k,j,i)+cons_df(4*3,k,j,i) - rho_i1(k,j,i)) / dt;
             pmb->user_out_var(27,k,j,i) = (cons_df(4*4,k,j,i) - rho_v(k,j,i)) / dt;
           }
         }
       }
-  }
-  AthenaArray<Real> v_frag;
-  v_frag.NewAthenaArray(N_P); 
-  v_frag(0) = 1000.0/pmb->pmy_mesh->punit->code_velocity_cgs; // fragmentation velocity for pebble size bin 0 [code_velocity]
-  v_frag(1) = 100.0/pmb->pmy_mesh->punit->code_velocity_cgs; // fragmentation velocity for pebble size bin 1 [code_velocity]
-  if (N_P > 0 and time > t_iterate and Relaxation_Flag){
-    pmb->prelax->RelaxationSource(pmb, time, dt, gm0, alpha_vis, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s, v_frag);
   }
 
   return;
