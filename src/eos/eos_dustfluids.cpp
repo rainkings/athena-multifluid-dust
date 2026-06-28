@@ -309,3 +309,15 @@ void EquationOfState::ApplyDustFluidsPrimitiveConservedFloors(
 
   return;
 }
+
+void EquationOfState::ApplyDustFluidsConservedFloors(
+    AthenaArray<Real> &cons_df, int n, int k, int j, int i) {
+
+  int dust_id = n/4;
+  int rho_id  = 4*dust_id;
+
+  Real &den_dust = cons_df(rho_id, k, j, i);
+  den_dust = (den_dust > dustfluids_floor_[dust_id]) ? den_dust : dustfluids_floor_[dust_id];
+
+  return;
+}

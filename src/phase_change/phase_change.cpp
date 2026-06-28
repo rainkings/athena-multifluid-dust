@@ -10,6 +10,7 @@
 
 // C++ headers
 #include <cmath>
+#include <limits>
 #include <sstream>
 
 // Athena++ headers
@@ -106,6 +107,7 @@ PhaseChange::PhaseChange(MeshBlock *pmb, ParameterInput *pin):
   
   dfloor_ = pin->GetOrAddReal("hydro", "dfloor", 1.e-10);
   dffloor_ = pin->GetOrAddReal("dust", "dffloor", 1.e-10);
+  source_floor_ = pin->GetOrAddReal("dust", "source_floor", 100.0*dffloor_);
 
   L_heat = L_heat_cgs / SQR(punit->code_velocity_cgs); // erg/g
   P_eq0 = P_eq0_cgs / punit->code_pressure_cgs;
@@ -301,6 +303,7 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
         // }
 
         // calculate drho limited by phase change and material amount
+        const Real source_floor = source_floor_;
         Real drho_limit = 0.0;
         Real avail_p = 0.0;
         Real avail_v = 0.0;
@@ -310,7 +313,7 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
           for (int p = 0; p < N_P; ++p) {
             Real cap_p = 0.0;
             Real rate_p = std::fabs(drhodt_ice_arr(p)) * dt; // sublimation limit
-            avail_p = rho_d_array(p) - dffloor_; // material limit
+            avail_p = rho_d_array(p) - source_floor; // material limit
             // if (avail_p <= minimum) {
             //   continue; // no material available for sublimation
             // }
@@ -329,7 +332,7 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
             drho_d_max_array(p) = cap_p; // how much condensation could happen for pebble p
           }
 
-          avail_v = rho_v - dffloor_;
+          avail_v = rho_v - source_floor;
           // if (avail_v <= minimum) {
           //   avail_v = 0.0;
           // }
@@ -464,12 +467,32 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
               break;
             }
 
+            if (drho_adp > 0.0) {
+              Real max_sub = std::numeric_limits<Real>::max();
+              for (int p = 0; p < N_P; ++p) {
+                if (drho_d_ratio_array(p) > 0.0) {
+                  Real avail_d = rho_d_array(p) - source_floor;
+                  if (avail_d < 0.0) avail_d = 0.0;
+                  Real lim_p = avail_d/drho_d_ratio_array(p);
+                  if (lim_p < max_sub) max_sub = lim_p;
+                }
+              }
+              if (!std::isfinite(max_sub)) max_sub = 0.0;
+              if (drho_adp > max_sub) drho_adp = max_sub;
+            } else if (drho_adp < 0.0) {
+              Real max_cond = rho_v - source_floor;
+              if (max_cond < 0.0) max_cond = 0.0;
+              if (-drho_adp > max_cond) drho_adp = -max_cond;
+            }
+            if (drho_adp == 0.0) break;
+
             x2 = x1 + drho_adp;
             rho_g1 = rho_g + drho_adp;
             rho_v1 = rho_v + drho_adp;
             
             for (int p = 0; p < N_P; ++p) {
               rho_d_array1(p) = rho_d_array(p) - drho_adp*drho_d_ratio_array(p);
+              if (rho_d_array1(p) < source_floor) rho_d_array1(p) = source_floor;
             }
             // std::cout << "nite = " << nite << ", drho_adp = " << drho_adp << 
             //   "rho_d_array(0) = " << rho_d_array1(0) << ", rho_d_array(1) = " << rho_d_array1(1) <<

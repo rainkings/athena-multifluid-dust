@@ -85,6 +85,10 @@ class EquationOfState {
     AthenaArray<Real> &cons_df, AthenaArray<Real> &prim_df,
     int n, int k, int j, int i);
 
+#pragma omp declare simd simdlen(SIMD_WIDTH) uniform(this,cons_df,n,k,j) linear(i)
+  void ApplyDustFluidsConservedFloors(
+    AthenaArray<Real> &cons_df, int n, int k, int j, int i);
+
 #pragma omp declare simd simdlen(SIMD_WIDTH) uniform(this,s,n,k,j) linear(i)
   void ApplyPassiveScalarFloors(AthenaArray<Real> &s, int n, int k, int j, int i);
 
