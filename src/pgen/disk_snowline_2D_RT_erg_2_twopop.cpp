@@ -1901,7 +1901,7 @@ void MyStoppingTime(MeshBlock *pmb, const Real time, const AthenaArray<Real> &pr
           
           // ===== upper limit, St can be extremely high for upper layer =====
           t_stop = (t_stop > 0.5) ? 0.5 : t_stop;
-          if(std::fabs(z) > 2.0 *std::pow((rad/r0), 1.5 + qvalue/2)){
+          if(std::fabs(z) > 5.0 *std::pow((rad/r0), 1.5 + qvalue/2)){
             t_stop = 1.e-4;
           } else {
             t_stop = t_stop;
