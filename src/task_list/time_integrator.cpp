@@ -3348,6 +3348,18 @@ TaskStatus TimeIntegratorTaskList::ReceiveAndCorrectDustFluidsFlux(MeshBlock *pm
 
 TaskStatus TimeIntegratorTaskList::IntegrateDustFluids(MeshBlock *pmb, int stage) {
   DustFluids *pdf = pmb->pdustfluids;
+  // auto ApplyConservedDustFloors = [&](AthenaArray<Real> &cons_df) {
+  //   for (int n = 0; n < NDUSTVARS; n += 4) {
+  //     for (int k = pmb->ks; k <= pmb->ke; ++k) {
+  //       for (int j = pmb->js; j <= pmb->je; ++j) {
+  // #pragma omp simd
+  //         for (int i = pmb->is; i <= pmb->ie; ++i) {
+  //           pmb->peos->ApplyDustFluidsConservedFloors(cons_df, n, k, j, i);
+  //         }
+  //       }
+  //     }
+  //   }
+  // };
 
   if (stage <= nstages) {
     if (stage_wghts[stage-1].main_stage) {
@@ -3370,8 +3382,10 @@ TaskStatus TimeIntegratorTaskList::IntegrateDustFluids(MeshBlock *pmb, int stage
 
       const Real wght = stage_wghts[stage-1].beta*pmb->pmy_mesh->dt;
       pdf->AddDustFluidsFluxDivergence(wght, pdf->df_u);
+      // ApplyConservedDustFloors(pdf->df_u);
       // add coordinate (geometric) source terms
       pmb->pcoord->AddDustFluidsCoordTermsDivergence(wght, pdf->df_flux, pdf->df_w, pdf->df_u);
+      // ApplyConservedDustFloors(pdf->df_u);
 
       // Hardcode an additional flux divergence weighted average for the penultimate
       // stage of SSPRK(5,4) since it cannot be expressed in a 3S* framework
@@ -3385,8 +3399,10 @@ TaskStatus TimeIntegratorTaskList::IntegrateDustFluids(MeshBlock *pmb, int stage
         // writing out to u2 register
         pmb->WeightedAve(pdf->df_u2, pdf->df_u1, pdf->df_u2, pdf->df_u0, pdf->df_u_fl_div, ave_wghts);
         pdf->AddDustFluidsFluxDivergence(wght_ssp, pdf->df_u2);
+        // ApplyConservedDustFloors(pdf->df_u2);
         // add coordinate (geometric) source terms
         pmb->pcoord->AddDustFluidsCoordTermsDivergence(wght_ssp, pdf->df_flux, pdf->df_u, pdf->df_u2);
+        // ApplyConservedDustFloors(pdf->df_u2);
       }
     }
     return TaskStatus::next;

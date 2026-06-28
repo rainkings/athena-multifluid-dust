@@ -52,7 +52,7 @@ class Relaxation {
   Real Get_mu(Real fv); 
   
   Real Tem0, r0, Tslope; // do this for the moment [26.04.29]Zhixuan
-  Real rho_sil_inter_, rho_ice_inter_, mmin; 
+  Real rho_sil_inter_, rho_ice_inter_, mmin, dffloor_, source_floor_; 
   Real T_relax_prefactor;
     
 };

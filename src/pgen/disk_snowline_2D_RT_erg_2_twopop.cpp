@@ -1447,15 +1447,7 @@ void MeshBlock::UserWorkInLoop(){
                         m_p = rho_refrac/rho_Np_p; // if only one composition, directly derive mass from density and number density
                     }
                   if (m_p<=0.0){
-                    std::cout << "m_p = " << m_p << std::endl;
-                    std::cout << "rho_Np_p = " << rho_Np_p << std::endl;
-                    std::cout << "rho_refrac = " << rho_refrac << std::endl;
-                    std::cout << "rho_comps = ";
-                    for (int z=0; z<N_Z; ++z) {
-                      std::cout << rho_comps(z) << " ";
-                    }
-                    std::cout << std::endl;
-                    quick_exit(1);
+                    m_p = prelax->m_p0_array(p);
                   }
                   // } else {
                   //   m_p = prelax->m_p0_array(p); // fallback to initial mass if density or number density is too low
@@ -1589,7 +1581,7 @@ Real Get_mu(Real fv){
 void MySource(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<Real> &prim,
     const AthenaArray<Real> &prim_df, const AthenaArray<Real> &prim_s, const AthenaArray<Real> &bcc,
     AthenaArray<Real> &cons, AthenaArray<Real> &cons_df, AthenaArray<Real> &cons_s){
-  
+
   RadiativeCondution(pmb, time, dt, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s);
   LocalIsothermalEOS(pmb, time, dt, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s);
   if(N_Z > 1 and time > t_iterate and PhaseChange_Flag){  // (Yu, 2025-11-16)

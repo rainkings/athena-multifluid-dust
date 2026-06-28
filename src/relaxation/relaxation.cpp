@@ -34,6 +34,8 @@ Relaxation::Relaxation(MeshBlock *pmb, ParameterInput *pin):
   r0 = pin->GetOrAddReal("problem", "r0", 3.0);
   Tslope = pin->GetOrAddReal("problem", "Tslope", -0.5);
   T_relax_prefactor = pin->GetOrAddReal("problem", "T_relax_prefactor", 100.0);
+  dffloor_ = pin->GetOrAddReal("dust", "dffloor", 1.e-10);
+  source_floor_ = pin->GetOrAddReal("dust", "source_floor", 100.0*dffloor_);
 
   Units *punit = pmb->pmy_mesh->punit;
   Real rho_sil_inter_cgs = pin->GetOrAddReal("problem", "rho_sil_inter", 3.0); // [g/cm^3]
@@ -80,8 +82,9 @@ void Relaxation::GetDivisionMasses(Real mmin, Real mmax, AthenaArray<Real> &m_di
       m_div(p-1) = std::exp(log_min + p * step);
     }
   } else if (mode == "small") {
+    if (N_P <= 1) return;
     Real mm = mmax;
-    for (int p = 0; p< N_P; ++p) {
+    for (int p = 0; p < N_P - 1; ++p) {
       m_div(p) = std::sqrt(mmin * mm);
       mm = m_div(p);
     }
@@ -340,6 +343,7 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
 #pragma omp simd
       for (int i = pmb->is; i <= pmb->ie; ++i) {
         //1. Gather current state
+        const Real source_floor = source_floor_;
         int NFLUIDS = NDUSTFLUIDS - 1 - N_P;   // number of dust fluids (excluding vapor & number density)
         AthenaArray<Real> rhos, v1s, v2s, v3s, ns;
         rhos.NewAthenaArray(NFLUIDS);
@@ -411,17 +415,19 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
         s_p_array.NewAthenaArray(N_P);
         for (int p = 0; p < N_P; ++p) {
           Real &m_p = m_p_array(p, k, j, i);
-
-          if (m_p== 0.0){
-            //[26.06.04]Zhixuan: if restart, since the m_p_array is not registered to a restart property, so it will be 0, and we can get it by the density and number density 
-            Real rho_pop = 0.0;
-            for (int zi = 0; zi < N_Z; ++zi) {
-              int dust_id = N_Z*p + zi;
-              rho_pop += cons_df(4*dust_id, k, j, i); // total density for population p
-            }
-            int n_id = 4*(N_Z*N_P + 1 + p);
-            Real n_pop = cons_df(n_id, k, j, i);
-            m_p = rho_pop / (n_pop);
+          // Reconstruct m_p from conserved state every call.
+          // m_p_array is not restart-serialized, so relying on prior memory is unsafe.
+          Real rho_pop = 0.0;
+          for (int zi = 0; zi < N_Z; ++zi) {
+            int dust_id = N_Z*p + zi;
+            rho_pop += cons_df(4*dust_id, k, j, i); // total density for population p
+          }
+          int n_id = 4*(N_Z*N_P + 1 + p);
+          Real n_pop = cons_df(n_id, k, j, i);
+          if (std::isfinite(rho_pop) && std::isfinite(n_pop) && rho_pop > source_floor && n_pop > source_floor) {
+            m_p = rho_pop / n_pop;
+          } else {
+            m_p = m_p0_array(p);
           }
 
           //get internal density for this pop 
@@ -494,6 +500,39 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
         Real relax_rate = dt / trelax;
         // [26.06.24]Zhixuan: Not an elegent way ...
         if (relax_rate > 1.0) relax_rate = 1.0;   // limit to full relaxation
+        // Positivity limiter for the explicit relaxation step. This preserves the
+        // relaxation form while preventing the source from depleting any evolved
+        // density below the source floor in a single hydro step.
+        Real relax_rate_limited = relax_rate;
+        for (int p = 0; p < N_P; ++p) {
+          for (int zi = 0; zi < N_Z; ++zi) {
+            int dust_id = N_Z * p + zi;
+            Real rho_target = rho_pop_relax(p) * comp_ratio(zi);
+            Real rho_current = cons_df(4*dust_id, k, j, i);
+            if (rho_target < rho_current) {
+              Real denom = rho_current - rho_target;
+              if (denom > 0.0) {
+                Real rate_max = (rho_current - source_floor)/denom;
+                if (rate_max < relax_rate_limited) relax_rate_limited = rate_max;
+              }
+            }
+          }
+          int n_id = N_Z * N_P + 1 + p;
+          Real n_target = n_relax(p);
+          Real n_current = cons_df(4*n_id, k, j, i);
+          if (n_target < n_current) {
+            Real denom = n_current - n_target;
+            if (denom > 0.0) {
+              Real rate_max = (n_current - source_floor)/denom;
+              if (rate_max < relax_rate_limited) relax_rate_limited = rate_max;
+            }
+          }
+        }
+        if (relax_rate_limited <= 0.0) {
+          t_relax(k,j,i) = 1.0e99;
+          continue;
+        }
+        relax_rate = relax_rate_limited;
 
         //6. Perform relaxation for each dust fluid and number density
         AthenaArray<Real> rho_new, ns_new;
