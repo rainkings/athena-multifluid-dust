@@ -116,7 +116,7 @@
 // compiler options
 #define COMPILED_WITH "g++"
 #define COMPILER_COMMAND "g++"
-#define COMPILED_WITH_OPTIONS " -I/usr/local/hdf5/1.12.1/include -O3 -std=c++11 -fopenmp  -L/usr/local/hdf5/1.12.1/lib  -lhdf5" // NOLINT
+#define COMPILED_WITH_OPTIONS " -I/home/izx/bin/hdf5/include -O3 -std=c++11 -fopenmp  -L/home/izx/bin/hdf5/lib  -lhdf5" // NOLINT
 
 //----------------------------------------------------------------------------------------
 // macros associated with numerical algorithm (rarely modified)
