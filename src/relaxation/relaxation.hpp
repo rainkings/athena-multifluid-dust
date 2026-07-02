@@ -50,6 +50,7 @@ class Relaxation {
   MeshBlock *pmy_block;  // ptr to MeshBlock containing this Relaxation class
 
   Real Get_mu(Real fv); 
+  Real Get_v_frag(Real v_frag_sil, Real v_frag_ice, Real rho_sil, Real rho_ice);
   
   Real Tem0, r0, Tslope; // do this for the moment [26.04.29]Zhixuan
   Real rho_sil_inter_, rho_ice_inter_, mmin, dffloor_, source_floor_; 

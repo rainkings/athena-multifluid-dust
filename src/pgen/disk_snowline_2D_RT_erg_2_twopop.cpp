@@ -435,12 +435,13 @@ void MeshBlock::InitUserMeshBlockData(ParameterInput *pin){
   }
 
   // the change of density from phase change
-  SetUserOutputVariableName(25, "drho_i_dt");
-  SetUserOutputVariableName(26, "drho_i1_dt");
-  SetUserOutputVariableName(27, "drho_v_dt");
+  SetUserOutputVariableName(7*N_P+3+8, "drho_i_dt");
+  SetUserOutputVariableName(7*N_P+3+8 + 1, "drho_i1_dt");
+  SetUserOutputVariableName(7*N_P+3+8 + 2, "drho_v_dt");
 
-  SetUserOutputVariableName(28, "mmax");
-  SetUserOutputVariableName(29, "t_relax");
+  SetUserOutputVariableName(7*N_P+3+8 + 3, "mmax");
+  SetUserOutputVariableName(7*N_P+3+8 + 4, "t_relax");
+
   // SetUserOutputVariableName(0,"Tem");
   // SetUserOutputVariableName(4,"q_latent");
   // SetUserOutputVariableName(5,"q_z");
@@ -635,7 +636,7 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
 
             // ===== upper limit, St can be extremely high for upper layer =====
             t_stop = (t_stop > 0.5) ? 0.5 : t_stop;
-            if(std::fabs(z) > 2.0 *std::pow((rad/r0), 1.5 + qvalue/2)){
+            if(std::fabs(z) > 3.0 *std::pow((rad/r0), 1.5 + qvalue/2)){
               t_stop = 1.e-4;
             }
 
@@ -1893,7 +1894,7 @@ void MyStoppingTime(MeshBlock *pmb, const Real time, const AthenaArray<Real> &pr
           
           // ===== upper limit, St can be extremely high for upper layer =====
           t_stop = (t_stop > 0.5) ? 0.5 : t_stop;
-          if(std::fabs(z) > 5.0 *std::pow((rad/r0), 1.5 + qvalue/2)){
+          if(std::fabs(z) > 3.0 *std::pow((rad/r0), 1.5 + qvalue/2)){
             t_stop = 1.e-4;
           } else {
             t_stop = t_stop;

@@ -333,9 +333,6 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
           }
 
           avail_v = rho_v - source_floor;
-          // if (avail_v <= minimum) {
-          //   avail_v = 0.0;
-          // }
           avail_v = (avail_v < minimum) ? minimum : avail_v;
 
           Real norm_factor = (drho_limit > avail_v) ? (avail_v / drho_limit) : 1.0;

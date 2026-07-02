@@ -97,6 +97,18 @@ void Relaxation::GetDivisionMasses(Real mmin, Real mmax, AthenaArray<Real> &m_di
   }
 }
 
+Real Relaxation::Get_v_frag(Real v_frag_sil, Real v_frag_ice, Real rho_sil, Real rho_ice) {
+  // Calculate the effective fragmentation velocity based on composition
+  Real f_ice = rho_ice / (rho_ice + rho_sil + 1e-30);
+  Real v_frag;
+  if (f_ice <0.1){
+    v_frag = (v_frag_ice*f_ice + v_frag_sil * (0.1 - f_ice))/0.1;
+  } else {
+    v_frag = v_frag_ice; 
+  }
+  return v_frag; 
+}
+
 
 // a general version
 // void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt, const Real gm0, const Real alpha_vis,
@@ -405,7 +417,8 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
                            (f_ice * rho_sil_inter_ + f_sil * rho_ice_inter_);
 
         // maximum grain mass (fragmentation limit)
-        Real v_frag_tot = (v_frag(1) * rho_sil + v_frag(0) * rho_ice) / (rho_sil + rho_ice);
+        //[26.06.29]Zhixuan: Use a steeper fragmentation velocity 
+        Real v_frag_tot = Get_v_frag(v_frag(1), v_frag(0), rho_sil, rho_ice); // effective fragmentation velocity
         Real St = SQR(v_frag_tot)/cs2/3.0/alpha_vis;
         Real s_max = St* rho_g * vth / (OmegaK * rho_inte_relax);
         Real m_max = FOUR_3RD * PI * SQR(s_max)*s_max * rho_inte_relax;
