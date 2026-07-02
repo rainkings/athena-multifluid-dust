@@ -105,6 +105,49 @@ Real damping_rate, radius_inner_damping, radius_outer_damping, inner_ratio_regio
 Real min_tol, max_dfvdt, dust_start_injection, injection_Tsoft, t_restart;
 Real kappa0, t_iterate, beta, f_vi;
 
+namespace UserOutVar {
+constexpr int kDustVarsPerPopulation = 7;
+constexpr int kVaporVars = 3;
+constexpr int kGasVars = 8;
+constexpr int kPhaseChangeVars = 3;
+constexpr int kExtraVars = 2;
+
+inline int DustBase(const int p) { return p * kDustVarsPerPopulation; }
+inline int VaporBase() { return kDustVarsPerPopulation * N_P; }
+inline int GasBase() { return VaporBase() + kVaporVars; }
+inline int PhaseChangeBase() { return GasBase() + kGasVars; }
+inline int ExtraBase() { return PhaseChangeBase() + kPhaseChangeVars; }
+inline int TotalVars() { return ExtraBase() + kExtraVars; }
+
+constexpr int kDustStoppingTime = 0;
+constexpr int kDustMass = 1;
+constexpr int kDustSize = 2;
+constexpr int kDustIceFluxX1 = 3;
+constexpr int kDustIceFluxX2 = 4;
+constexpr int kDustSilFluxX1 = 5;
+constexpr int kDustSilFluxX2 = 6;
+
+constexpr int kVaporDiffusivity = 0;
+constexpr int kVaporFluxX1 = 1;
+constexpr int kVaporFluxX2 = 2;
+
+constexpr int kGasTemperature = 0;
+constexpr int kGasLatentHeating = 1;
+constexpr int kGasRadiativeHeating = 2;
+constexpr int kGasDiffusiveHeating = 3;
+constexpr int kGasFluxX1 = 4;
+constexpr int kGasFluxX2 = 5;
+constexpr int kGasCoolingTime = 6;
+constexpr int kGasIntegratedHeating = 7;
+
+constexpr int kDrhoIce0Dt = 0;
+constexpr int kDrhoIce1Dt = 1;
+constexpr int kDrhoVaporDt = 2;
+
+constexpr int kMaxPebbleMass = 0;
+constexpr int kRelaxationTime = 1;
+}  // namespace UserOutVar
+
 // User Sources
 void MySource(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<Real> &prim,
     const AthenaArray<Real> &prim_df, const AthenaArray<Real> &prim_s, const AthenaArray<Real> &bcc,
@@ -393,41 +436,42 @@ void MeshBlock::InitUserMeshBlockData(ParameterInput *pin){
     }
   }
   
-  AllocateUserOutputVariables(7*N_P + 3 + 8 + 5);
+  AllocateUserOutputVariables(UserOutVar::TotalVars());
   // Firstly, we output the variables related to non-tracer dustfluids 
   const std::vector<std::pair<int,const char*>> dustProp = {
-    {0,  "st"},
-    {1, "m_p"},
-    {2, "s_p"},
-    {3, "flx_ice_x1"},
-    {4, "flx_ice_x2"},
-    {5, "flx_sil_x1"},
-    {6, "flx_sil_x2"},
+    {UserOutVar::kDustStoppingTime, "st"},
+    {UserOutVar::kDustMass, "m_p"},
+    {UserOutVar::kDustSize, "s_p"},
+    {UserOutVar::kDustIceFluxX1, "flx_ice_x1"},
+    {UserOutVar::kDustIceFluxX2, "flx_ice_x2"},
+    {UserOutVar::kDustSilFluxX1, "flx_sil_x1"},
+    {UserOutVar::kDustSilFluxX2, "flx_sil_x2"},
   };
 
   for (int np =0; np<N_P; np++) {
     for (auto &p : dustProp) {
-      SetUserOutputVariableName(p.first + np*7, (std::string(p.second) + "_" + std::to_string(np+1)).c_str());
+      SetUserOutputVariableName(UserOutVar::DustBase(np) + p.first,
+                                (std::string(p.second) + "_" + std::to_string(np+1)).c_str());
     }
   }
 
   // Then, we output the variables related to tracer dustfluids 
-  int offset_vapor = dustProp.size()*N_P; 
-  SetUserOutputVariableName(offset_vapor, "dif");
-  SetUserOutputVariableName(offset_vapor+1, "flx_vap_x1");
-  SetUserOutputVariableName(offset_vapor+2, "flx_vap_x2");
+  const int offset_vapor = UserOutVar::VaporBase();
+  SetUserOutputVariableName(offset_vapor + UserOutVar::kVaporDiffusivity, "dif");
+  SetUserOutputVariableName(offset_vapor + UserOutVar::kVaporFluxX1, "flx_vap_x1");
+  SetUserOutputVariableName(offset_vapor + UserOutVar::kVaporFluxX2, "flx_vap_x2");
 
   // Finally, output the variables related to gas 
-  int offset_gas = offset_vapor + 3;
+  const int offset_gas = UserOutVar::GasBase();
   const std::vector<std::pair<int,const char*>> gasProp = {
-    {0,  "Tem"},
-    {1,  "q_latent"},
-    {2,  "q_z"},
-    {3, "q_diff"},
-    {4, "flx_x1"},
-    {5, "flx_x2"},
-    {6, "t_cool"},
-    {7, "q_int"},
+    {UserOutVar::kGasTemperature, "Tem"},
+    {UserOutVar::kGasLatentHeating, "q_latent"},
+    {UserOutVar::kGasRadiativeHeating, "q_z"},
+    {UserOutVar::kGasDiffusiveHeating, "q_diff"},
+    {UserOutVar::kGasFluxX1, "flx_x1"},
+    {UserOutVar::kGasFluxX2, "flx_x2"},
+    {UserOutVar::kGasCoolingTime, "t_cool"},
+    {UserOutVar::kGasIntegratedHeating, "q_int"},
   };
 
   for (auto &p : gasProp) {
@@ -435,12 +479,14 @@ void MeshBlock::InitUserMeshBlockData(ParameterInput *pin){
   }
 
   // the change of density from phase change
-  SetUserOutputVariableName(7*N_P+3+8, "drho_i_dt");
-  SetUserOutputVariableName(7*N_P+3+8 + 1, "drho_i1_dt");
-  SetUserOutputVariableName(7*N_P+3+8 + 2, "drho_v_dt");
+  const int offset_phase = UserOutVar::PhaseChangeBase();
+  SetUserOutputVariableName(offset_phase + UserOutVar::kDrhoIce0Dt, "drho_i_dt");
+  SetUserOutputVariableName(offset_phase + UserOutVar::kDrhoIce1Dt, "drho_i1_dt");
+  SetUserOutputVariableName(offset_phase + UserOutVar::kDrhoVaporDt, "drho_v_dt");
 
-  SetUserOutputVariableName(7*N_P+3+8 + 3, "mmax");
-  SetUserOutputVariableName(7*N_P+3+8 + 4, "t_relax");
+  const int offset_extra = UserOutVar::ExtraBase();
+  SetUserOutputVariableName(offset_extra + UserOutVar::kMaxPebbleMass, "mmax");
+  SetUserOutputVariableName(offset_extra + UserOutVar::kRelaxationTime, "t_relax");
 
   // SetUserOutputVariableName(0,"Tem");
   // SetUserOutputVariableName(4,"q_latent");
@@ -972,7 +1018,8 @@ void Mesh::UserWorkInLoop() {
                 //   PRINT(Tem);
                 // }
                 //////////////////////////////////////
-                pmb ->user_out_var(23, k,j,i) = t_cool;
+                pmb->user_out_var(UserOutVar::GasBase() + UserOutVar::kGasCoolingTime, k, j, i)
+                  = t_cool;
 
                 // store the whole temperature array.  
                 Tem_active(tk,tj,ti) = Tem;
@@ -1000,8 +1047,10 @@ void Mesh::UserWorkInLoop() {
           for (int i=pmb->is; i<=pmb->ie; i++) {
             // (Yu, 2025-11-16) Updated to use PhaseChange module arrays
             // reset q_latent and copy its value to dfv_dt:
-            pmb->user_out_var(18,k,j,i) = pmb->pphase_change->q_latent(k,j,i);
-            pmb->user_out_var(20,k,j,i) = pmb->pphase_change->q_diff(k,j,i);
+            pmb->user_out_var(UserOutVar::GasBase() + UserOutVar::kGasLatentHeating, k, j, i)
+              = pmb->pphase_change->q_latent(k,j,i);
+            pmb->user_out_var(UserOutVar::GasBase() + UserOutVar::kGasDiffusiveHeating, k, j, i)
+              = pmb->pphase_change->q_diff(k,j,i);
             pmb->pphase_change->q_latent(k,j,i) = 0.0;
             pmb->pphase_change->q_diff(k,j,i) = 0.0;
           }
@@ -1509,7 +1558,8 @@ void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin){
         Real mu = Get_mu(fv);
         Real prs = rho_g*T/(mu*KELVIN);
         // output
-        user_out_var(17,k,j,i) = phydro->Tem(k,j,i);
+        user_out_var(UserOutVar::GasBase() + UserOutVar::kGasTemperature, k, j, i)
+          = phydro->Tem(k,j,i);
         // user_out_var(1,k,j,i) = prs/rhoe_g + 1.0;
         // user_out_var(1,k,j,i) = phydro->hdif.kappa(HydroDiffusion::DiffProcess::aniso, k, j, i);
             Units *punit = pmy_mesh->punit;
@@ -1527,16 +1577,26 @@ void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin){
             Real s_p = pphase_change->Get_s_p_from_m_p(m_p, rho_comps); // [code_length]
 
             // really no good idea to output this more elegently now.... [25.11.24]
-            user_out_var(p*7,k,j,i) = pdustfluids->stopping_time_array(p*N_Z,k,j,i);
-            user_out_var(p*7+1,k,j,i) = m_p * punit->code_mass_cgs; // Convert to CGS for output 
-            user_out_var(p*7+2,k,j,i) = s_p * punit->code_length_cgs; // Convert to CGS for output
-            user_out_var(p*7+3,k,j,i) = pdustfluids->df_flux[X1DIR](4*(p*N_Z),k,j,i);
-            user_out_var(p*7+4,k,j,i) = pdustfluids->df_flux[X2DIR](4*(p*N_Z),k,j,i);
-            user_out_var(p*7+5,k,j,i) = pdustfluids->df_flux[X1DIR](4*(p*N_Z + 1),k,j,i);
-            user_out_var(p*7+6,k,j,i) = pdustfluids->df_flux[X2DIR](4*(p*N_Z + 1),k,j,i);
+            const int dust_offset = UserOutVar::DustBase(p);
+            user_out_var(dust_offset + UserOutVar::kDustStoppingTime, k, j, i)
+              = pdustfluids->stopping_time_array(p*N_Z,k,j,i);
+            user_out_var(dust_offset + UserOutVar::kDustMass, k, j, i)
+              = m_p * punit->code_mass_cgs; // Convert to CGS for output
+            user_out_var(dust_offset + UserOutVar::kDustSize, k, j, i)
+              = s_p * punit->code_length_cgs; // Convert to CGS for output
+            user_out_var(dust_offset + UserOutVar::kDustIceFluxX1, k, j, i)
+              = pdustfluids->df_flux[X1DIR](4*(p*N_Z),k,j,i);
+            user_out_var(dust_offset + UserOutVar::kDustIceFluxX2, k, j, i)
+              = pdustfluids->df_flux[X2DIR](4*(p*N_Z),k,j,i);
+            user_out_var(dust_offset + UserOutVar::kDustSilFluxX1, k, j, i)
+              = pdustfluids->df_flux[X1DIR](4*(p*N_Z + 1),k,j,i);
+            user_out_var(dust_offset + UserOutVar::kDustSilFluxX2, k, j, i)
+              = pdustfluids->df_flux[X2DIR](4*(p*N_Z + 1),k,j,i);
           }
-          user_out_var(28,k,j,i) = prelax->mmax_array(k, j, i)*punit->code_mass_cgs; // maximum pebble mass in the cell [code_mass]
-          user_out_var(29,k,j,i) = prelax->t_relax(k, j, i)*punit->code_time_cgs; // maximum pebble mass in the cell [code_mass]
+            user_out_var(UserOutVar::ExtraBase() + UserOutVar::kMaxPebbleMass, k, j, i)
+              = prelax->mmax_array(k, j, i)*punit->code_mass_cgs; // maximum pebble mass in the cell [code_mass]
+            user_out_var(UserOutVar::ExtraBase() + UserOutVar::kRelaxationTime, k, j, i)
+              = prelax->t_relax(k, j, i)*punit->code_time_cgs; // relaxation timescale [code_time]
         }
         // user_out_var(4,k,j,i) = pdustfluids->dfv_dt(k,j,i);
         
@@ -1544,11 +1604,16 @@ void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin){
         // user_out_var(7,k,j,i) = pdustfluids->df_flux[X2DIR](0,k,j,i);
         // user_out_var(8,k,j,i) = pdustfluids->df_flux[X1DIR](4*(vapor_id),k,j,i);
         // user_out_var(9,k,j,i) = pdustfluids->df_flux[X2DIR](4*(vapor_id),k,j,i);
-        user_out_var(21,k,j,i) = phydro->flux[X1DIR](IDN,k,j,i);
-        user_out_var(22,k,j,i) = phydro->flux[X2DIR](IDN,k,j,i);
-        user_out_var(14,k,j,i) = pdustfluids->nu_dustfluids_array(vapor_id,k,j,i);
-        user_out_var(15,k,j,i) = pdustfluids->df_flux[X1DIR](4*(vapor_id),k,j,i);
-        user_out_var(16,k,j,i) = pdustfluids->df_flux[X2DIR](4*(vapor_id),k,j,i);
+        user_out_var(UserOutVar::GasBase() + UserOutVar::kGasFluxX1, k, j, i)
+          = phydro->flux[X1DIR](IDN,k,j,i);
+        user_out_var(UserOutVar::GasBase() + UserOutVar::kGasFluxX2, k, j, i)
+          = phydro->flux[X2DIR](IDN,k,j,i);
+        user_out_var(UserOutVar::VaporBase() + UserOutVar::kVaporDiffusivity, k, j, i)
+          = pdustfluids->nu_dustfluids_array(vapor_id,k,j,i);
+        user_out_var(UserOutVar::VaporBase() + UserOutVar::kVaporFluxX1, k, j, i)
+          = pdustfluids->df_flux[X1DIR](4*(vapor_id),k,j,i);
+        user_out_var(UserOutVar::VaporBase() + UserOutVar::kVaporFluxX2, k, j, i)
+          = pdustfluids->df_flux[X2DIR](4*(vapor_id),k,j,i);
 
       }
     }
@@ -1562,8 +1627,10 @@ void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin){
         int tk = static_cast<int>(loc.lx3)*block_size.nx3+(k-kl);
 
         // radiative heating rate, q_z
-        user_out_var(24,k,j,i) = pmy_mesh->ruser_mesh_data[3](tk, tj, ti);
-        user_out_var(19,k,j,i) = pmy_mesh->ruser_mesh_data[2](tk, tj, ti);
+        user_out_var(UserOutVar::GasBase() + UserOutVar::kGasIntegratedHeating, k, j, i)
+          = pmy_mesh->ruser_mesh_data[3](tk, tj, ti);
+        user_out_var(UserOutVar::GasBase() + UserOutVar::kGasRadiativeHeating, k, j, i)
+          = pmy_mesh->ruser_mesh_data[2](tk, tj, ti);
       }
     }
   }
@@ -1663,9 +1730,12 @@ void MySource(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<
       for (int j=pmb->js; j<=pmb->je; ++j) {
 #pragma omp simd
         for (int i=pmb->is; i<=pmb->ie; ++i) {
-            pmb->user_out_var(25,k,j,i) = (cons_df(0,k,j,i)+cons_df(4,k,j,i) - rho_i(k,j,i)) / dt;
-            pmb->user_out_var(26,k,j,i) = (cons_df(4*2,k,j,i)+cons_df(4*3,k,j,i) - rho_i1(k,j,i)) / dt;
-            pmb->user_out_var(27,k,j,i) = (cons_df(4*4,k,j,i) - rho_v(k,j,i)) / dt;
+            pmb->user_out_var(UserOutVar::PhaseChangeBase() + UserOutVar::kDrhoIce0Dt, k, j, i)
+                = (cons_df(0,k,j,i)+cons_df(4,k,j,i) - rho_i(k,j,i)) / dt;
+            pmb->user_out_var(UserOutVar::PhaseChangeBase() + UserOutVar::kDrhoIce1Dt, k, j, i)
+                = (cons_df(4*2,k,j,i)+cons_df(4*3,k,j,i) - rho_i1(k,j,i)) / dt;
+            pmb->user_out_var(UserOutVar::PhaseChangeBase() + UserOutVar::kDrhoVaporDt, k, j, i)
+                = (cons_df(4*4,k,j,i) - rho_v(k,j,i)) / dt;
           }
         }
       }
