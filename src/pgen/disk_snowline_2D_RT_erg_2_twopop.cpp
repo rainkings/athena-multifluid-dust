@@ -104,6 +104,7 @@ Real x1min, x1max, x2min, x2max;
 Real damping_rate, radius_inner_damping, radius_outer_damping, inner_ratio_region, outer_ratio_region, inner_width_damping, outer_width_damping, theta_upper_damping, theta_lower_damping, upper_altitude_damping, lower_altitude_damping;
 Real min_tol, max_dfvdt, dust_start_injection, injection_Tsoft, t_restart;
 Real kappa0, t_iterate, beta, f_vi;
+AthenaArray<Real> v_frag;
 
 namespace UserOutVar {
 constexpr int kDustVarsPerPopulation = 7;
@@ -228,6 +229,11 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   beta = pin->GetReal("problem", "beta");
   f_vi = pin->GetOrAddReal("problem", "f_vi", 1.0);
 
+  v_frag.NewAthenaArray(N_Z);
+  for (int p = 0; p<N_Z; ++p){
+    v_frag(p) = pin->GetReal("dust", "vfrag_" + std::to_string(p+1))/punit->code_velocity_cgs;
+  }
+
   // Get parameters of initial pressure and cooling parameters
   if (NON_BAROTROPIC_EOS) {
     cs2_0 = pin->GetOrAddReal("problem", "cs2_0", 0.0025);
@@ -293,7 +299,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   lower_altitude_damping = (x2max-x2min)*0.1;
 
   theta_upper_damping = x2min + upper_altitude_damping;
-  theta_lower_damping = x2max - upper_altitude_damping;
+  theta_lower_damping = x2max - upper_altitude_damping; //not used
 
   // The normalized wave damping timescale, in unit of dynamical timescale.
   damping_rate = pin->GetOrAddReal("problem", "damping_rate", 1.0);
@@ -870,8 +876,8 @@ void Mesh::UserWorkInLoop() {
                 ////////////////////
                 // including latent heat
                 // (Yu, 2025-11-16) Updated to use PhaseChange module arrays
-                // q_z(tk,tj,ti) = q_irr + q_vis + pmb->pphase_change->q_latent(k,j,i) + pmb->pphase_change->q_diff(k,j,i);
-                q_z(tk,tj,ti) = q_irr + q_vis + pmb->pphase_change->q_diff(k,j,i);
+                q_z(tk,tj,ti) = q_irr + q_vis + pmb->pphase_change->q_latent(k,j,i) + pmb->pphase_change->q_diff(k,j,i);
+                // q_z(tk,tj,ti) = q_irr + q_vis + pmb->pphase_change->q_diff(k,j,i);
                 // q_z(tk,tj,ti) = q_irr + q_vis + pmb->pphase_change->q_diff(k,j,i);
                 // linear interpolation
                 q_int_f(tk,tj+1,ti) = q_z(tk,tj,ti)*dx2 + q_int_f(tk,tj,ti);
@@ -1317,10 +1323,12 @@ void Mesh::UserWorkInLoop() {
   AthenaArray<Real> flx_peb_ratio;
   flx_peb_ratio.NewAthenaArray(NDUSTFLUIDS-N_P);
   // Calculate flux ratio for each pebble composition (vapor entries remain uninitialized but unused)
-  for (int p=0; p<N_P; p++) {
-    int dust_id = N_Z * p;
-    flx_peb_ratio(dust_id) = fice[p]*Mdot_peb(dust_id) / Mdot_peb_est(dust_id);
-    flx_peb_ratio(dust_id+1) = (1 - fice[p])*Mdot_peb(dust_id) / Mdot_peb_est(dust_id);
+  for (int d=0; d<N_P*N_Z+1; d++) {
+    // int dust_id = N_Z * p;
+    //[26.07.13]Zhixuan: no need to use the fice now.
+    // flx_peb_ratio(dust_id) = fice[p]*Mdot_peb(dust_id) / Mdot_peb_est(dust_id);
+    // flx_peb_ratio(dust_id+1) = (1 - fice[p])*Mdot_peb(dust_id) / Mdot_peb_est(dust_id);
+    flx_peb_ratio(d) = Mdot_peb(d) / Mdot_peb_est(d);
   }
 
   for (int bn=0; bn<nblocal; ++bn) {
@@ -1696,10 +1704,6 @@ void MySource(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<
 //         }
 //       }
   }
-  AthenaArray<Real> v_frag;
-  v_frag.NewAthenaArray(N_P); 
-  v_frag(0) = 1000.0/pmb->pmy_mesh->punit->code_velocity_cgs; // fragmentation velocity for pebble size bin 0 [code_velocity]
-  v_frag(1) = 100.0/pmb->pmy_mesh->punit->code_velocity_cgs; // fragmentation velocity for pebble size bin 1 [code_velocity]
   if (N_P > 0 and time > t_iterate and Relaxation_Flag){
     // Record the density of ices before phase change 
     AthenaArray<Real> rho_i, rho_i1, rho_v;
@@ -1724,7 +1728,16 @@ void MySource(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<
         }
       }
 
+    // LogicalLocation &loc = pmb->loc;
+    // int ti = static_cast<int>(loc.lx1)*pmb->block_size.nx1+(10-pmb->is) + NGHOST;
+    // int tj_mid = pmb->pmy_mesh->mesh_size.nx2 + NGHOST -1;
+
+    // std::cout << cons_df(0, tj_mid, ti) << std::endl;
+    // std::cout << pmb->prelax->mmax_array(0, tj_mid, ti)/pmb->prelax->m_p_array(0, 0, tj_mid,ti) << std::endl;
+
     pmb->prelax->RelaxationSource(pmb, time, dt, gm0, alpha_vis, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s, v_frag);
+
+    // std::cout << pmb->prelax->mmax_array(0, tj_mid, ti) << std::endl;
 
     for (int k=pmb->ks; k<=pmb->ke; ++k) {
       for (int j=pmb->js; j<=pmb->je; ++j) {
@@ -2023,7 +2036,8 @@ void MyDustDiffusivity(DustFluids *pdf, MeshBlock *pmb,
         gas_nu = alpha_vis* std::pow(rad/r0, nu_slope); // fix the gas viscosity.
         // artifical decay for outer boundary
         Real w_damp = 0.05*(x1max-x1min);
-        Real f_decay_art = std::tanh(std::pow((rad-x1max)/w_damp ,2.0)); // outer bc decay
+        // Real f_decay_art = std::tanh(std::pow((rad-x1max)/w_damp ,2.0)); // outer bc decay
+        Real f_decay_art = 1.0;
         vapor_diffusivity = gas_nu * f_decay_art;
         
         // Loop over pebbles to calculate diffusivity per pebble
@@ -2472,7 +2486,7 @@ void DiskInnerX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
             int v1_id   = rho_id + 1;
             int v2_id   = rho_id + 2;
             int v3_id   = rho_id + 3;
-            Real decay_art = SQR(x1_active)/SQR(x1_ghost);
+            Real decay_art = 1.0; //Zhixuan: do not use this 
             
             if(dust_id == vapor_id){
               Real &vapor_rho_ghost  = prim_df(rho_id, k, j, il-i);
@@ -2626,7 +2640,10 @@ void DiskOuterX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
               vel_dust_phi -= vel_K;
 
             if(dust_id == vapor_id){
-              dust_rho_ghost = initial_D2G[dust_id]*gas_rho_ghost;
+              //[26.07.10]Zhixuan: Since there is vapor in upper layer at outer boundary, we should use fv rather than just 
+              //            initial d2g ratio to calculate the vapor density in ghost zones. Otherwise, the vapor density will be too small and the vapor will be sucked into the disk.
+              Real fv = prim_df(4*(vapor_id), k, j, iu)/gas_rho_active;
+              dust_rho_ghost = fv*gas_rho_ghost;
               dust_rho_ghost  = (dust_rho_ghost > dffloor) ? dust_rho_ghost : dffloor;
               dust_vel1_ghost = gas_vel1_ghost;
               dust_vel2_ghost = gas_vel2_ghost;
@@ -2812,8 +2829,8 @@ for (int k=kl; k<=ku; ++k) {
         Theta_func(i)      = SQR((x2 - theta_upper_damping)*inv_upper_damp)*2.0;
         Theta_func(i)      = Theta_func(i) > 1.0 ? 1.0 : Theta_func(i);
 
-        // inv_damping_tau(i) = (damping_rate*omega_dyn(i));
-        inv_damping_tau(i) = 1.0/dt;
+        inv_damping_tau(i) = (damping_rate*omega_dyn(i));
+        // inv_damping_tau(i) = 1.0/dt;
 
         // hydrostatic balance in theta direction: vtheta = 0
         Real gas_vel2_0 = 0.0;

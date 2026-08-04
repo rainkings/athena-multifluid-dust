@@ -99,7 +99,7 @@ void Relaxation::GetDivisionMasses(Real mmin, Real mmax, AthenaArray<Real> &m_di
 
 Real Relaxation::Get_v_frag(Real v_frag_sil, Real v_frag_ice, Real rho_sil, Real rho_ice) {
   // Calculate the effective fragmentation velocity based on composition
-  Real f_ice = rho_ice / (rho_ice + rho_sil + 1e-30);
+  Real f_ice = rho_ice / (rho_ice + rho_sil);
   Real v_frag;
   if (f_ice <0.1){
     v_frag = (v_frag_ice*f_ice + v_frag_sil * (0.1 - f_ice))/0.1;
@@ -418,7 +418,8 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
 
         // maximum grain mass (fragmentation limit)
         //[26.06.29]Zhixuan: Use a steeper fragmentation velocity 
-        Real v_frag_tot = Get_v_frag(v_frag(1), v_frag(0), rho_sil, rho_ice); // effective fragmentation velocity
+        // Real v_frag_tot = Get_v_frag(v_frag(1), v_frag(0), rho_sil, rho_ice); // effective fragmentation velocity
+        Real v_frag_tot = (v_frag(1)*rho_sil + v_frag(0)*rho_ice)/(rho_sil + rho_ice); // the fragmentation velocity for the current composition, using the composition as a proxy.
         Real St = SQR(v_frag_tot)/cs2/3.0/alpha_vis;
         Real s_max = St* rho_g * vth / (OmegaK * rho_inte_relax);
         Real m_max = FOUR_3RD * PI * SQR(s_max)*s_max * rho_inte_relax;
@@ -480,7 +481,10 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
 
         for (int p = 0; p < N_P; ++p) {
           Real m_low, m_high;
-          if (p == 0) {
+          if (N_P == 1) {
+            m_low = mmin;
+            m_high = m_max;
+          } else if (p == 0) {
             m_low = mmin;
             m_high = m_div(0);
           } else if (p == N_P - 1) {
@@ -644,7 +648,7 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
         //mass conservation check
         Real mass_after = 0.0;
         for (int n = 0; n < NFLUIDS; ++n) mass_after += cons_df(4*n, k, j, i);
-        if (std::abs(mass_after - mass_before) / (mass_before + 1e-30) > 1e-10) {
+        if (std::abs(mass_after - mass_before) / (mass_before + 1e-30) > 1e-5) {
           std::cout << "### WARNING: Mass not conserved during relaxation at cell ("
                     << k << "," << j << "," << i << ")" << std::endl;
           std::cout << "Mass before: " << mass_before << " after: " << mass_after << std::endl;

@@ -140,12 +140,17 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
       if(FLX_COR) {
         // Only apply flux correction at outer boundary of simulation domain
         if (pmb->pbval->block_bcs[BoundaryFace::outer_x1] == BoundaryFlag::user) {
-          for (int n=0; n<N_P*N_Z; n++) { // exclude vapor
+          for (int n=0; n<N_P*N_Z + 1; n++) { // exclude vapor [26.07.10]Zhixuan: set vapor flux to be 0
+
+            if (n == vapor_id) {
+              x1flux(4*n,k,j,ie+1) = 0.0; // no inflx of vapor
+              x1flux(4*n+2,k,j,ie+1) = 0.0; // no inflx of vapor
+            }else{
             int rho_id = 4*n;
             x1flux(rho_id,k,j,ie+1) = inflx_dust_x1(n,k,j,0); // inflx of dustfluids
             // x1flux(rho_id+1,k,j,ie+1) = inflx_dust_x1(n,k,j,0)*prim_df(rho_id+1,k,j,ie+1);
             x1flux(rho_id+2,k,j,ie+1) = inflx_dust_x1(n,k,j,0)*prim_df(rho_id+2,k,j,ie+1);
-
+            }
             // int n_id = N_P*N_Z + 1 + n/N_Z;
             // int dustn_id = 4*n_id;
             // x1flux(dustn_id,k,j,ie+1) = inflx_dust_x1(n_id,k,j,0);

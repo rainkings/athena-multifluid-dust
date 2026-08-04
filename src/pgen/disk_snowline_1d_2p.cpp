@@ -746,6 +746,7 @@ void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin){
       for (int i=is-NGHOST; i<=ie+NGHOST; ++i) {
         
         user_out_var(17,k,j,i) = phydro->Tem(k,j,i);
+        // this is wrong
         user_out_var(18,k,j,i) = phydro->flux[IDN](k,j,i);
         user_out_var(19,k,j,i) = phydro->hdif.nu(HydroDiffusion::DiffProcess::alpha, k, j, i);
 

@@ -50,7 +50,7 @@ PhaseChange::PhaseChange(MeshBlock *pmb, ParameterInput *pin):
     msg << "### FATAL ERROR in PhaseChange::PhaseChange" << std::endl
         << "NDUSTFLUIDS (" << NDUSTFLUIDS << ") != N_P * N_Z + NVapor ("
         << N_P << " * " << N_Z << " + " << NVapor << " = " 
-        << N_P * N_Z + NVapor << ")" << std::endl;
+        << N_P * (N_Z + 1) + NVapor << ")" << std::endl;
     ATHENA_ERROR(msg);
   }
   

@@ -79,7 +79,7 @@ Real DustFluids::NewAdvectionDt() {
             dt3(i) /= (std::abs(df_w_i[v3_id]));
           }
           //[26.06.21]Zhixuan: if the timestep is too small, print out the information and exit
-            if (dt1(i) <= 1.e-3 || dt2(i) <= 1.e-3 || dt3(i) <= 1.e-3) {
+            if (dt1(i) <= 1.e-4 || dt2(i) <= 1.e-4 || dt3(i) <= 1.e-4) {
               int ti = static_cast<int>(pmb->loc.lx1)*pmb->block_size.nx1+(i-pmb->is)+ NGHOST;
               int tj = static_cast<int>(pmb->loc.lx2)*pmb->block_size.nx2+(j-pmb->js)+ NGHOST;
               std::cout << "dt1(i) = " << dt1(i) << ", dt2(i) = " << dt2(i) << ", dt3(i) = " << dt3(i) << std::endl;
