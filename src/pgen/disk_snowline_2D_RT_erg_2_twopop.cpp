@@ -1983,7 +1983,7 @@ void MyStoppingTime(MeshBlock *pmb, const Real time, const AthenaArray<Real> &pr
             t_stop = t_stop;
           }
           
-          Real &st_time_n = pdustfluids->stopping_time_array(dustn_id, k, j, i);
+          Real &st_time_n = stopping_time(dustn_id, k, j, i);
           // apply stopping time to all compositions of this pebble
           for (int z = 0; z < N_Z; ++z) {
             int dust_id = N_Z * p + z;
@@ -2052,7 +2052,7 @@ void MyDustDiffusivity(DustFluids *pdf, MeshBlock *pmb,
           Real &diffusivity_n = nu_dust(dustn_id, k, j, i);
             diffusivity_n = gas_nu/(1.+SQR(taus_n));
           Real &soundspeed_n  = cs_dust(dustn_id, k, j, i);
-            soundspeed_n        = std::sqrt(diffusivity_n/omega_dyn);
+            soundspeed_n        = std::sqrt(diffusivity_n*omega_dyn);
           
           // Calculate diffusivity for all compositions of this pebble
           for (int z = 0; z < N_Z; ++z) {
@@ -2062,7 +2062,7 @@ void MyDustDiffusivity(DustFluids *pdf, MeshBlock *pmb,
             diffusivity = gas_nu/(1.+SQR(taus_peb));
 
             Real &soundspeed  = cs_dust(dust_id, k, j, i);
-            soundspeed        = std::sqrt(diffusivity/omega_dyn);
+            soundspeed        = std::sqrt(diffusivity*omega_dyn);
           }
         }
       }
@@ -2393,7 +2393,7 @@ Real PoverRho(const Real rad, const Real phi, const Real z) {
 Real CompressedX2(Real x, RegionSize rs)
 {
   // Real w=std::acos(1.0-x)/(PI/2.0); // cosine
-  Real w=std::pow(x,1.0/3.0); // power law
+  Real w=std::pow(x,1.0/2.0); // power law
 
   return w*rs.x2max+(1.0-w) * rs.x2min;
 }
@@ -2823,16 +2823,70 @@ for (int k=kl; k<=ku; ++k) {
       Real rad_max = x1max*std::sin(x2);
       GetCylCoord(pmb->pcoord, rad_arr(i), phi_arr(i), z_arr(i), i, j, k);
 
+      // --- Inner radial damping zone ---
+      // Damp vr toward equilibrium viscous profile near the inner boundary.
+      // Covers ALL theta (including midplane) to stabilize mass flux where density is highest.
+      if (rad_arr(i) <= radius_inner_damping) {
+        // Radial taper: 1 at inner edge, 0 at radius_inner_damping
+        Real R_func = SQR((radius_inner_damping - rad_arr(i))*inv_inner_damp);
+        R_func = R_func > 1.0 ? 1.0 : R_func;
+
+        Real Tem_eq     = pmb->pmy_mesh->ruser_mesh_data[4](0,j,i);
+        Real fv = pmb->pdustfluids->df_w(4*(vapor_id), k, j, i)/prim(IDN, k, j, i);
+        Real gas_vel1_0 = Vr_ProfileCyl_gas_fv_T_pvalue(rad_arr(i), phi_arr(i), z_arr(i), fv, Tem_eq, pvalue, qvalue);
+
+        Real &gas_rho  = prim(IDN, k, j, i);
+        Real &gas_vel1 = prim(IM1, k, j, i);
+        Real &gas_vel2 = prim(IM2, k, j, i);
+        Real &gas_vel3 = prim(IM3, k, j, i);
+        Real &gas_pre  = prim(IPR, k, j, i);
+
+        Real &gas_dens = cons(IDN, k, j, i);
+        Real &gas_mom1 = cons(IM1, k, j, i);
+        Real &gas_mom2 = cons(IM2, k, j, i);
+        Real &gas_mom3 = cons(IM3, k, j, i);
+        Real &gas_erg  = cons(IEN, k, j, i);
+
+        Real Ek0 = 0.5*(SQR(gas_vel1) + SQR(gas_vel2) + SQR(gas_vel3))*gas_dens;
+
+        Real damp = damping_rate * R_func;
+        damp = damp > 1.0 ? 1.0 : damp;
+        Real delta_gas_rho  = 0.0;
+        Real delta_gas_vel1 = (gas_vel1_0 - gas_vel1)*damp;
+        Real delta_gas_vel2 = 0.0;
+        Real delta_gas_vel3 = 0.0;
+        Real delta_gas_pre  = 0.0;
+
+        gas_rho  += delta_gas_rho;
+        gas_vel1 += delta_gas_vel1;
+        gas_vel2 += delta_gas_vel2;
+        gas_vel3 += delta_gas_vel3;
+        gas_pre  += delta_gas_pre;
+
+        gas_dens = gas_rho;
+        gas_mom1 = gas_dens*gas_vel1;
+        gas_mom2 = gas_dens*gas_vel2;
+        gas_mom3 = gas_dens*gas_vel3;
+
+        Real Ek = 0.5*(SQR(gas_mom1) + SQR(gas_mom2) + SQR(gas_mom3))/gas_dens;
+        gas_erg = gas_erg - Ek0 + Ek;
+      }
+
       if (x2 <= theta_upper_damping and x2 > x2min) {
         // See de Val-Borro et al. 2006 & 2007
-        omega_dyn(i)       = std::sqrt(gm0/(rad_arr(i)*rad_arr(i)*rad_arr(i)));
         Theta_func(i)      = SQR((x2 - theta_upper_damping)*inv_upper_damp)*2.0;
         Theta_func(i)      = Theta_func(i) > 1.0 ? 1.0 : Theta_func(i);
 
-        inv_damping_tau(i) = (damping_rate*omega_dyn(i));
-        // inv_damping_tau(i) = 1.0/dt;
+        // Radial enhancement: stronger damping at smaller radii where wave-crossing
+        // time is shorter. Omega_K ~ r^(-3/2), so radial_enhance compensates with r^(-3/2)
+        // to keep the number of damped wave periods roughly constant across the disk.
+        Real radial_enhance = std::pow(r0 / rad_arr(i), 1.5);
 
         // hydrostatic balance in theta direction: vtheta = 0
+        // also damp vr toward equilibrium viscous profile to prevent sign reversal
+        // at the upper layers (vr should always be negative/inflow)
+        Real Tem_eq     = T0 * std::pow(rad_arr(i)/r0, qvalue);
+        Real gas_vel1_0 = Vr_ProfileCyl_gas_fv_T_pvalue(rad_arr(i), phi_arr(i), z_arr(i), 0.0, Tem_eq, pvalue, qvalue);
         Real gas_vel2_0 = 0.0;
 
         Real &gas_rho  = prim(IDN, k, j, i);
@@ -2849,17 +2903,12 @@ for (int k=kl; k<=ku; ++k) {
 
         Real Ek0 = 0.5*(SQR(gas_vel1) + SQR(gas_vel2) + SQR(gas_vel3))*gas_dens;
 
-        // with damping timescale
-        // Real delta_gas_rho  = (gas_rho_0  - gas_rho )*Theta_func(i)*inv_damping_tau(i)*dt;
-        // Real delta_gas_vel1 = (gas_vel1_0 - gas_vel1)*Theta_func(i)*inv_damping_tau(i)*dt;
-        // Real delta_gas_vel2 = (gas_vel2_0 - gas_vel2)*Theta_func(i)*inv_damping_tau(i)*dt;
-        // Real delta_gas_vel3 = (gas_vel3_0 - gas_vel3)*Theta_func(i)*inv_damping_tau(i)*dt;
-        // Real delta_gas_pre  = (gas_pre_0  - gas_pre )*Theta_func(i)*inv_damping_tau(i)*dt;
-
-        // immediate damping
+        // immediate damping of v_theta and v_r, with radial enhancement
+        Real damp = Theta_func(i) * radial_enhance;
+        damp = damp > 1.0 ? 1.0 : damp;
         Real delta_gas_rho  = 0.0;
         Real delta_gas_vel1 = 0.0;
-        Real delta_gas_vel2 = (gas_vel2_0 - gas_vel2)*Theta_func(i);
+        Real delta_gas_vel2 = (gas_vel2_0 - gas_vel2)*damp;
         Real delta_gas_vel3 = 0.0;
         Real delta_gas_pre  = 0.0;
 

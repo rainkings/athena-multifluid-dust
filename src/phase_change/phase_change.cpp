@@ -528,6 +528,8 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
 
         // Calculate latent heat absorption/release rate
         q_latent(k,j,i) += -(rho_v - rho_v0)/(pmb->pmy_mesh->dt) * L_heat;
+        // std::cout << "At (i,j,k)=(" << i << "," << j << "," << k << "):" << std::endl
+        //   << "q_latent = " << q_latent(k,j,i) << std::endl;
 
         // std::cout << "After relaxation: " << std::endl;
         // std::cout << "rho_d_array(0) = " << rho_d_array(0) << ", rho_d_array(1) = " << rho_d_array(1) << std::endl;
