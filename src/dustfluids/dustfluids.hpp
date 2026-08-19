@@ -84,6 +84,11 @@ class DustFluids {
   int solver_id;        // 0 for penetration, 1 for non-penetration, 2 for hlle without cs, 3 for hlle without cs
   int dust_xorder;      // The reconstruction order of dust fluids
 
+  // location of the cell limiting the dust advection timestep (diagnostics)
+  int min_dt_hyperbolic_dust_id = 0;
+  int min_dt_hyperbolic_dir = 1;
+  int min_dt_hyperbolic_i = 0, min_dt_hyperbolic_j = 0, min_dt_hyperbolic_k = 0;
+
   Real const_stopping_time[NDUSTFLUIDS]; // Constant stopping time of dust
   Real const_nu_dust[NDUSTFLUIDS];       // Constant concentration diffusivity of dust
 

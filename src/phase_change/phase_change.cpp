@@ -33,8 +33,7 @@
 
 PhaseChange::PhaseChange(MeshBlock *pmb, ParameterInput *pin): 
     pmy_block(pmb),
-    q_latent(pmb->ncells3, pmb->ncells2, pmb->ncells1),
-    q_diff(pmb->ncells3, pmb->ncells2, pmb->ncells1) {
+    q_latent(pmb->ncells3, pmb->ncells2, pmb->ncells1) {
   
   // Dust layout configuration (Yu, 2025-11-16) use compile-time N_P and N_Z
   if(NVapor != 1) {

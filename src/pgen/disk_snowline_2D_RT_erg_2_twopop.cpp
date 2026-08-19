@@ -339,8 +339,8 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
 
   // global optical depth
   if(true){
-    AllocateRealUserMeshDataField(8);
-    // tau_vi, tau_eff, q_total, F_z, Tem_RT, int_1 & int_2 to get rho(z)
+    AllocateRealUserMeshDataField(9);
+    // 0:tau_vi, 1:tau_eff, 2:q_z, 3:q_int, 4:Tem_RT, 5:int_1, 6:int_2, 7:rho_z, 8:q_diff
     ruser_mesh_data[0].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
     ruser_mesh_data[1].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
     ruser_mesh_data[2].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
@@ -349,6 +349,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
     ruser_mesh_data[5].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
     ruser_mesh_data[6].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
     ruser_mesh_data[7].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
+    ruser_mesh_data[8].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
   }
 
   // print parameters
@@ -760,6 +761,7 @@ void Mesh::UserWorkInLoop() {
     AthenaArray<Real> &int_1 = ruser_mesh_data[5];
     AthenaArray<Real> &int_2 = ruser_mesh_data[6];
     AthenaArray<Real> &rho_z = ruser_mesh_data[7];
+    AthenaArray<Real> &q_diff = ruser_mesh_data[8];  // radiative conduction heating rate
   #endif
 
   AthenaArray<Real> tau_vi_f, q_int_f, tau_eff_f;
@@ -876,7 +878,11 @@ void Mesh::UserWorkInLoop() {
                 ////////////////////
                 // including latent heat
                 // (Yu, 2025-11-16) Updated to use PhaseChange module arrays
-                q_z(tk,tj,ti) = q_irr + q_vis + pmb->pphase_change->q_latent(k,j,i) + pmb->pphase_change->q_diff(k,j,i);
+                q_z(tk,tj,ti) = q_irr + q_vis + q_diff(tk,tj,ti);
+
+                if (pmb->pphase_change != nullptr) {
+                  q_z(tk,tj,ti) += pmb->pphase_change->q_latent(k,j,i);
+                } 
                 // q_z(tk,tj,ti) = q_irr + q_vis + pmb->pphase_change->q_diff(k,j,i);
                 // q_z(tk,tj,ti) = q_irr + q_vis + pmb->pphase_change->q_diff(k,j,i);
                 // linear interpolation
@@ -887,7 +893,7 @@ void Mesh::UserWorkInLoop() {
                   std::cout << "q_irr = " << q_irr << std::endl;
                   std::cout << "q_vis = " << q_vis << std::endl;
                   std::cout << "q_latent = " << pmb->pphase_change->q_latent(k,j,i) << std::endl;
-                  std::cout << "q_diff = " << pmb->pphase_change->q_diff(k,j,i) << std::endl;
+                  std::cout << "q_diff = " << q_diff(tk,tj,ti) << std::endl;
                 }
                 // Simpson's 1/3 rule:
                 // q_int(tk,tj,ti) = q_int(tk,tj-2,ti) +  dx2/3.0*(q_z(tk,tj-2,ti) + 4.0*q_z(tk,tj-1,ti) + q_z(tk,tj,ti));
@@ -1051,14 +1057,16 @@ void Mesh::UserWorkInLoop() {
       for (int k=pmb->ks; k<=pmb->ke; k++) {
         for (int j=pmb->js; j<=pmb->je; j++) {
           for (int i=pmb->is; i<=pmb->ie; i++) {
-            // (Yu, 2025-11-16) Updated to use PhaseChange module arrays
-            // reset q_latent and copy its value to dfv_dt:
+            int ti = static_cast<int>(loc.lx1)*pmb->block_size.nx1+(i-pmb->is) + NGHOST;
+            int tj = static_cast<int>(loc.lx2)*pmb->block_size.nx2+(j-pmb->js) + NGHOST;
+            int tk = static_cast<int>(loc.lx3)*pmb->block_size.nx3+(k-pmb->ks);
+            // reset q_latent/q_diff and copy their values to output
             pmb->user_out_var(UserOutVar::GasBase() + UserOutVar::kGasLatentHeating, k, j, i)
               = pmb->pphase_change->q_latent(k,j,i);
             pmb->user_out_var(UserOutVar::GasBase() + UserOutVar::kGasDiffusiveHeating, k, j, i)
-              = pmb->pphase_change->q_diff(k,j,i);
+              = q_diff(tk,tj,ti);
             pmb->pphase_change->q_latent(k,j,i) = 0.0;
-            pmb->pphase_change->q_diff(k,j,i) = 0.0;
+            q_diff(tk,tj,ti) = 0.0;
           }
         }
       }
@@ -1381,6 +1389,17 @@ void MeshBlock::UserWorkInLoop(){
         const Real &gas_vel2 = phydro->w(IVY, k, j, i);
         const Real &gas_vel3 = phydro->w(IVZ, k, j, i);
 
+        // this is to calculate the temperature for the ghost cells defining boundary conditions
+        if(i < is or i > ie or j < js or j > je){
+          Real E_kg = 0.5*(SQR(gas_vel1) + SQR(gas_vel2) + SQR(gas_vel3))*gas_den;
+          Real rhoe_g = phydro->u(IEN,k,j,i) - E_kg;
+          Real fv = pdustfluids->df_w(4*(vapor_id), k, j, i)/gas_den;
+          Real T_from_erg = pphase_change->Get_T_rhoe_g(rhoe_g, gas_den,fv);
+          
+          phydro->Tem(k, j, i) = T_from_erg;          
+        }
+
+        if (N_P == 0) continue;
         // copy gas velocity to tracer;
         int dust_id = vapor_id;
         int rho_id  = 4*dust_id;
@@ -1463,15 +1482,27 @@ void MeshBlock::UserWorkInLoop(){
         }
 
         // maybe do floor value here.
-        for (int n=0; n<NDUSTFLUIDS; n++) {
+        for (int n=0; n<N_P*N_Z+1; n++) {
           int dust_id = n;
           int rho_id  = 4*dust_id;
           int v1_id   = rho_id + 1;
           int v2_id   = rho_id + 2;
           int v3_id   = rho_id + 3;
-
           Real &dust_rho = pdustfluids->df_w(rho_id, k, j, i);
           dust_rho = (dust_rho > dffloor) ? dust_rho : (dffloor);
+
+          if (dust_id != vapor_id){
+            int dustn_id = 4*(N_P*N_Z + 1 + (dust_id/N_Z));
+            Real &dust_n = pdustfluids->df_w(dustn_id, k, j, i);
+            // [26.08.17]Zhixuan: use different floor value for number density 
+            Real floor_n = dffloor*pmy_mesh->punit->code_mass_cgs;
+            dust_n = (dust_n > floor_n) ? dust_n : (floor_n); 
+
+            pdustfluids->df_u(dustn_id, k, j, i) = dust_n;
+            pdustfluids->df_u(dustn_id+1, k, j, i) = dust_n*pdustfluids->df_w(dustn_id+1, k, j, i);
+            pdustfluids->df_u(dustn_id+2, k, j, i) = dust_n*pdustfluids->df_w(dustn_id+2, k, j, i);
+            pdustfluids->df_u(dustn_id+3, k, j, i) = dust_n*pdustfluids->df_w(dustn_id+3, k, j, i);
+          }
 
           pdustfluids->df_u(rho_id, k, j, i) = dust_rho;
           pdustfluids->df_u(v1_id, k, j, i) = dust_rho*pdustfluids->df_w(v1_id, k, j, i);
@@ -1517,15 +1548,6 @@ void MeshBlock::UserWorkInLoop(){
             }
         }
 
-        // this is to calculate the temperature for the ghost cells defining boundary conditions
-        if(i < is or i > ie or j < js or j > je){
-          Real E_kg = 0.5*(SQR(gas_vel1) + SQR(gas_vel2) + SQR(gas_vel3))*gas_den;
-          Real rhoe_g = phydro->u(IEN,k,j,i) - E_kg;
-          Real fv = pdustfluids->df_w(4*(vapor_id), k, j, i)/gas_den;
-          Real T_from_erg = pphase_change->Get_T_rhoe_g(rhoe_g, gas_den,fv);
-          
-          phydro->Tem(k, j, i) = T_from_erg;          
-        }
 
       }
     }
@@ -1779,22 +1801,27 @@ void LocalIsothermalEOS(MeshBlock *pmb, const Real time, const Real dt, const At
           Real &gas_mom3 = cons(IM3, k, j, i);
           Real &gas_erg  = cons(IEN, k, j, i);
 
-          Real &rho_v = cons_df(4*(vapor_id), k, j, i);
-          Real fv = rho_v/gas_dens;
+          Real fv = 0.0; 
+          Real rho_v = 0.0;
+          if (pmb->pphase_change != nullptr) {
+            rho_v = cons_df(4*(vapor_id), k, j, i);
+            fv = rho_v/gas_dens;
+
+            if(std::isnan(fv) or (fv < 0.0) or gas_dens < 0.0){
+              std::cout <<"fv= nan in LocalIsothermalEOS" << std::endl;
+              std::cout << "rhov =" << rho_v << std::endl;
+              std::cout << "rhov-1 = " << cons_df(4*(vapor_id), k, j, i-1) << std::endl;
+              std::cout << "rhov+1 = " << cons_df(4*(vapor_id), k, j, i+1) << std::endl;
+              std::cout << "gas_dens =" << gas_dens << std::endl;
+              std::cout << "rad, phi, z = " << rad << ", " << phi << ", " << z << std::endl;
+              std::cout << "i, j, k = " << i << ", " << j << ", " << k << std::endl;
+            }
+          }
           Real gas_vel1_0 = gas_mom1/gas_dens;
           Real gas_vel2_0 = gas_mom2/gas_dens;
           Real gas_vel3_0 = gas_mom3/gas_dens;
           Real Ek0 = 0.5*(SQR(gas_vel1_0) + SQR(gas_vel2_0) + SQR(gas_vel3_0));
 
-          if(std::isnan(fv) or std::isnan(Ek0) or (fv < 0.0) or gas_dens < 0.0){
-            std::cout <<"fv= nan in LocalIsothermalEOS" << std::endl;
-            std::cout << "rhov =" << rho_v << std::endl;
-            std::cout << "rhov-1 = " << cons_df(4*(vapor_id), k, j, i-1) << std::endl;
-            std::cout << "rhov+1 = " << cons_df(4*(vapor_id), k, j, i+1) << std::endl;
-            std::cout << "gas_dens =" << gas_dens << std::endl;
-            std::cout << "rad, phi, z = " << rad << ", " << phi << ", " << z << std::endl;
-            std::cout << "i, j, k = " << i << ", " << j << ", " << k << std::endl;
-          }
 
           // reset the gas vertical profile according to midplane temperature.
           Real gas_vel1_1 = gas_vel1_0;
@@ -1818,11 +1845,11 @@ void LocalIsothermalEOS(MeshBlock *pmb, const Real time, const Real dt, const At
             if(time < 0.195){
               gas_dens = DenProfileCyl_gas_fv_T(rad, phi, z, fv, Tem_mid) + rho_v;
             }
-          if (std::isnan(gas_dens)){
-          std::cout << "gas_dens = " << gas_dens << std::endl;
-          std::cout << "k, j, i = " << k << ", " << j << ", " << i << std::endl;
 
-          }
+            if (std::isnan(gas_dens)){
+              std::cout << "gas_dens = " << gas_dens << std::endl;
+              std::cout << "k, j, i = " << k << ", " << j << ", " << i << std::endl;
+            }
 
             Real v_acc_gas = -1.5*pmb->phydro->hdif.nu(HydroDiffusion::DiffProcess::alpha, k, j, i) / rad;
             
@@ -1837,7 +1864,12 @@ void LocalIsothermalEOS(MeshBlock *pmb, const Real time, const Real dt, const At
           // get pressure of local temperature
           Real mu = Get_mu(fv);
           Real press = gas_dens * Tem /(KELVIN*mu);
-          Real gamma = pmb->peos->calc_gamma(fv);
+          Real gamma;
+          if (pmb->pphase_change != nullptr) {
+            gamma = pmb->peos->calc_gamma(fv);
+          } else {
+            gamma = gamma_gas;
+          }
           gas_erg    = press/(gamma-1.0) + gas_dens*0.5*(SQR(gas_vel1_1) + SQR(gas_vel2_1) + SQR(gas_vel3_1));
           gas_mom1   = gas_dens*gas_vel1_1;
           gas_mom2   = gas_dens*gas_vel2_1;
@@ -1895,7 +1927,7 @@ void RadiativeCondution(MeshBlock *pmb, const Real time, const Real dt, const At
             f_decay_art2 = 0.0;
           }
           Real f_decay_art3 = std::exp(-1.0/(tau_vi));
-          pmb->pphase_change->q_diff(k, j, i) += dt/pmb->pmy_mesh->dt*(x1area(i+1)*x1flux(k,j,i+1) - x1area(i)*x1flux(k,j,i))/(-vol(i)) *f_decay_art*f_decay_art2*f_decay_art3;
+          pmb->pmy_mesh->ruser_mesh_data[8](tk, tj, ti) += dt/pmb->pmy_mesh->dt*(x1area(i+1)*x1flux(k,j,i+1) - x1area(i)*x1flux(k,j,i))/(-vol(i)) *f_decay_art*f_decay_art2*f_decay_art3;
           // if (dt <=0.0){
           //   std::cout << "q_diff = " << pmb->pphase_change->q_diff(k, j, i) << std::endl;
           //   std::cout << "tau_vi = " << tau_vi << std::endl;
@@ -1912,7 +1944,6 @@ void RadiativeCondution(MeshBlock *pmb, const Real time, const Real dt, const At
         //   std::cout << "dt = " <<pmb->pmy_mesh->dt << std::endl;
         //   std::cout << "k, j, i = " << k << ", " << j << ", " << i << std::endl;
         // }
-          pmb->pphase_change->q_diff(k, j, i) = 0.0;
         }
         
         // do not include heat conduction in Athena++ steps
@@ -2075,7 +2106,9 @@ void MyDustDiffusivity(DustFluids *pdf, MeshBlock *pmb,
 void MyConductivity(HydroDiffusion *phdif, MeshBlock *pmb,
     const AthenaArray<Real> &w, const AthenaArray<Real> &bc,
     int is, int ie, int js, int je, int ks, int ke) {
-  
+
+  const bool has_dust = (pmb->pdustfluids != nullptr);
+
   for (int k=ks; k<=ke; ++k) { // include ghost zone
     for (int j=js; j<=je; ++j) { // prim, cons
 #pragma omp simd
@@ -2083,7 +2116,10 @@ void MyConductivity(HydroDiffusion *phdif, MeshBlock *pmb,
         Real Tem = pmb->phydro->Tem(k, j, i);
 
         const Real &gas_rho = w(IDN, k, j, i);
-        Real fv = pmb->pdustfluids->df_w(4*vapor_id, k, j, i) / gas_rho;
+        Real fv = 0.0;
+        if (has_dust) {
+          fv = pmb->pdustfluids->df_w(4*vapor_id, k, j, i) / gas_rho;
+        }
         if(std::isnan(fv) or (fv < 0.0)){
           std::cout << "Conductivity, fv = " << fv << std::endl;
           std::cout << "gas_rho = " << gas_rho << std::endl;

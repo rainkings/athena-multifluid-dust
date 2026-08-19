@@ -48,6 +48,10 @@ Real DustFluids::NewAdvectionDt() {
   Real real_max = std::numeric_limits<Real>::max();
   Real min_dt_hyperbolic_df = real_max;
 
+  // track the dust species, direction, and cell of the restricting timestep
+  int min_dust_id = 0, min_dir = 1;
+  int min_i = is, min_j = js, min_k = ks;
+
   FluidFormulation fluid_status = pmb->pmy_mesh->fluid_setup;
   //[26.06.13]Zhixuan: change this to NP*NZ +1, so that the number density will not influence the timestep
   for (int n=0; n<N_P*N_Z+1; ++n) {
@@ -89,29 +93,56 @@ Real DustFluids::NewAdvectionDt() {
             }
         }
 
-        // compute minimum of (v1 +/- C)
+        // compute minimum of (v1 +/- C) and record the location of the restricting cell
         for (int i=is; i<=ie; ++i) {
-          Real& dt_1 = dt1(i);
-          min_dt_hyperbolic_df = std::min(min_dt_hyperbolic_df, dt_1);
+          if (dt1(i) < min_dt_hyperbolic_df) {
+            min_dt_hyperbolic_df = dt1(i);
+            min_dust_id = dust_id;
+            min_dir = 1;
+            min_i = i; min_j = j; min_k = k;
+          }
         }
 
         // if grid is 2D/3D, compute minimum of (v2 +/- C)
         if (pmb->block_size.nx2 > 1) {
           for (int i=is; i<=ie; ++i) {
-            Real& dt_2 = dt2(i);
-            min_dt_hyperbolic_df = std::min(min_dt_hyperbolic_df, dt_2);
+            if (dt2(i) < min_dt_hyperbolic_df) {
+              min_dt_hyperbolic_df = dt2(i);
+              min_dust_id = dust_id;
+              min_dir = 2;
+              min_i = i; min_j = j; min_k = k;
+            }
           }
         }
 
         // if grid is 3D, compute minimum of (v3 +/- C)
         if (pmb->block_size.nx3 > 1) {
           for (int i=is; i<=ie; ++i) {
-            Real& dt_3 = dt3(i);
-            min_dt_hyperbolic_df = std::min(min_dt_hyperbolic_df, dt_3);
+            if (dt3(i) < min_dt_hyperbolic_df) {
+              min_dt_hyperbolic_df = dt3(i);
+              min_dust_id = dust_id;
+              min_dir = 3;
+              min_i = i; min_j = j; min_k = k;
+            }
           }
         }
       }
     }
+  }
+
+  // store the location of the restricting cell (global indices including ghost zones,
+  // using the same convention as the ti/tj printed by the quick_exit check above)
+  min_dt_hyperbolic_dust_id = min_dust_id;
+  min_dt_hyperbolic_dir = min_dir;
+  min_dt_hyperbolic_i = static_cast<int>(pmb->loc.lx1)*pmb->block_size.nx1
+                        + (min_i - pmb->is) + NGHOST;
+  if (pmb->block_size.nx2 > 1) {
+  min_dt_hyperbolic_j = static_cast<int>(pmb->loc.lx2)*pmb->block_size.nx2
+                        + (min_j - pmb->js) + NGHOST;
+  }
+  if (pmb->block_size.nx3 > 1) {
+    min_dt_hyperbolic_k = static_cast<int>(pmb->loc.lx3)*pmb->block_size.nx3
+                          + (min_k - pmb->ks) + NGHOST;
   }
 
   return min_dt_hyperbolic_df;

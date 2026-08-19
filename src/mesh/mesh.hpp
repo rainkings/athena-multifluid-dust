@@ -113,6 +113,14 @@ class MeshBlock {
   int cis, cie, cjs, cje, cks, cke, cnghost;
   int gflag;
 
+  // dt_hyperbolic limiter diagnostics: which fluid limits dt_hyperbolic, at which
+  // global cell (indices include ghost cells, as in DustFluids::NewAdvectionDt), and
+  // along which coordinate direction (1=radial/x1, 2=theta/x2, 3=phi/x3)
+  int dt_hyp_limiter = 0;  // 0 = gas, 1 = dust fluids
+  int dt_hyp_dir = 1;      // limiting coordinate direction
+  int dt_hyp_i = 0, dt_hyp_j = 0, dt_hyp_k = 0;  // limiting global cell
+  int dt_hyp_dust_id = 0;  // dust species index (when dt_hyp_limiter == 1)
+
   // user output variables for analysis
   int nuser_out_var;
   AthenaArray<Real> user_out_var;
@@ -273,6 +281,11 @@ class Mesh {
   const bool shear_periodic;         // flag of shear periodic b.c.
   const FluidFormulation fluid_setup;
   Real start_time, time, tlim, dt, dt_hyperbolic, dt_parabolic, dt_user, cfl_number;
+  // global dt_hyperbolic limiter diagnostics (mirror the restricting MeshBlock values)
+  int dt_hyp_limiter = 0;
+  int dt_hyp_dir = 1;
+  int dt_hyp_i = 0, dt_hyp_j = 0, dt_hyp_k = 0;
+  int dt_hyp_dust_id = 0;
   int nlim, ncycle, ncycle_out, dt_diagnostics;
   std::string sts_integrator;
   Real sts_max_dt_ratio;

@@ -65,6 +65,11 @@ void Hydro::NewBlockTimeStep() {
   Real min_dt_parabolic  = real_max;
   Real min_dt_user  = real_max;
 
+  // gas advection timestep and location of its restricting cell (diagnostics)
+  Real min_dt_hyperbolic_gas = real_max;
+  int gas_min_dir = 1;
+  int gas_min_i = is, gas_min_j = js, gas_min_k = ks;
+
   Real cspeed = 0.0;
   if(NR_RADIATION_ENABLED)
     cspeed = pmb->pnrrad->reduced_c;
@@ -155,29 +160,53 @@ void Hydro::NewBlockTimeStep() {
         }
       }
 
-      // compute minimum of (v1 +/- C)
+      // compute minimum of (v1 +/- C) and record the location of the restricting cell
       for (int i=is; i<=ie; ++i) {
-        const Real& dt_1 = dt1(i);
-        min_dt_hyperbolic = std::min(min_dt_hyperbolic, dt_1);
+        if (dt1(i) < min_dt_hyperbolic) {
+          min_dt_hyperbolic = dt1(i);
+          gas_min_dir = 1;
+          gas_min_i = i; gas_min_j = j; gas_min_k = k;
+        }
       }
 
       // if grid is 2D/3D, compute minimum of (v2 +/- C)
       if (pmb->block_size.nx2 > 1) {
         for (int i=is; i<=ie; ++i) {
-          const Real& dt_2 = dt2(i);
-          min_dt_hyperbolic = std::min(min_dt_hyperbolic, dt_2);
+          if (dt2(i) < min_dt_hyperbolic) {
+            min_dt_hyperbolic = dt2(i);
+            gas_min_dir = 2;
+            gas_min_i = i; gas_min_j = j; gas_min_k = k;
+          }
         }
       }
 
       // if grid is 3D, compute minimum of (v3 +/- C)
       if (pmb->block_size.nx3 > 1) {
         for (int i=is; i<=ie; ++i) {
-          const Real& dt_3 = dt3(i);
-          min_dt_hyperbolic = std::min(min_dt_hyperbolic, dt_3);
+          if (dt3(i) < min_dt_hyperbolic) {
+            min_dt_hyperbolic = dt3(i);
+            gas_min_dir = 3;
+            gas_min_i = i; gas_min_j = j; gas_min_k = k;
+          }
         }
       }
     }
   }
+
+  // pure gas advection timestep (before the Hall term / orbital advection are folded in)
+  min_dt_hyperbolic_gas = min_dt_hyperbolic;
+
+  // default: the gas limits dt_hyperbolic. Store the global cell indices (including
+  // ghost zones) of the restricting cell.
+  pmb->dt_hyp_limiter = 0;
+  pmb->dt_hyp_dir = gas_min_dir;
+  pmb->dt_hyp_i = static_cast<int>(pmb->loc.lx1)*pmb->block_size.nx1
+                  + (gas_min_i - pmb->is) + NGHOST;
+  pmb->dt_hyp_j = static_cast<int>(pmb->loc.lx2)*pmb->block_size.nx2
+                  + (gas_min_j - pmb->js) + NGHOST;
+  pmb->dt_hyp_k = static_cast<int>(pmb->loc.lx3)*pmb->block_size.nx3
+                  + (gas_min_k - pmb->ks) + NGHOST;
+  pmb->dt_hyp_dust_id = 0;
 
   // calculate the timestep limited by the diffusion processes
   if (hdif.hydro_diffusion_defined) {
@@ -201,6 +230,17 @@ void Hydro::NewBlockTimeStep() {
     DustFluids *pdf           = pmb->pdustfluids;
     Real min_dt_hyperbolic_df = pdf->NewAdvectionDt();
     min_dt_hyperbolic         = std::min(min_dt_hyperbolic, min_dt_hyperbolic_df);
+
+    // if the dust fluids give a smaller advection timestep than the gas, record which
+    // dust species, cell, and direction limit dt_hyperbolic
+    if (min_dt_hyperbolic_df < min_dt_hyperbolic_gas) {
+      pmb->dt_hyp_limiter = 1;
+      pmb->dt_hyp_dir = pdf->min_dt_hyperbolic_dir;
+      pmb->dt_hyp_i = pdf->min_dt_hyperbolic_i;
+      pmb->dt_hyp_j = pdf->min_dt_hyperbolic_j;
+      pmb->dt_hyp_k = pdf->min_dt_hyperbolic_k;
+      pmb->dt_hyp_dust_id = pdf->min_dt_hyperbolic_dust_id;
+    }
 
   // dust fluids diffusion
     if (pdf->dfdif.dustfluids_diffusion_defined) {

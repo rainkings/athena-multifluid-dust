@@ -49,9 +49,6 @@ class PhaseChange {
   AthenaArray<Real> mmax_array;    // maximum mass allowed by fragmentation [code mass]
   // AthenaArray<Real> m_p_array;     // the evolved pebble mass array, added for relaxation source term [code mass]
 
-  // this is for heat conduction
-  AthenaArray<Real> q_diff;      // heat conduction rate [code unit]
-
   AthenaArray<Real> P_eq_array;
 
   Real L_heat, Cd_water, P_eq0; // phase_change constants 

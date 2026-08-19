@@ -1253,10 +1253,26 @@ void Mesh::NewTimeStep() {
   dt_parabolic = pmb->new_block_dt_parabolic_;
   dt_user = pmb->new_block_dt_user_;
 
+  // initialize global limiter diagnostics from the first MeshBlock
+  dt_hyp_limiter = pmb->dt_hyp_limiter;
+  dt_hyp_dir = pmb->dt_hyp_dir;
+  dt_hyp_i = pmb->dt_hyp_i;
+  dt_hyp_j = pmb->dt_hyp_j;
+  dt_hyp_k = pmb->dt_hyp_k;
+  dt_hyp_dust_id = pmb->dt_hyp_dust_id;
+
   for (int i=0; i<nblocal; ++i) {
     pmb = my_blocks(i);
     dt = std::min(dt, pmb->new_block_dt_);
-    dt_hyperbolic  = std::min(dt_hyperbolic, pmb->new_block_dt_hyperbolic_);
+    if (pmb->new_block_dt_hyperbolic_ < dt_hyperbolic) {
+      dt_hyperbolic = pmb->new_block_dt_hyperbolic_;
+      dt_hyp_limiter = pmb->dt_hyp_limiter;
+      dt_hyp_dir = pmb->dt_hyp_dir;
+      dt_hyp_i = pmb->dt_hyp_i;
+      dt_hyp_j = pmb->dt_hyp_j;
+      dt_hyp_k = pmb->dt_hyp_k;
+      dt_hyp_dust_id = pmb->dt_hyp_dust_id;
+    }
     dt_parabolic  = std::min(dt_parabolic, pmb->new_block_dt_parabolic_);
     dt_user  = std::min(dt_user, pmb->new_block_dt_user_);
   }
@@ -1269,6 +1285,25 @@ void Mesh::NewTimeStep() {
   dt_hyperbolic = dt_array[1];
   dt_parabolic  = dt_array[2];
   dt_user       = dt_array[3];
+
+  // the rank whose local dt_hyperbolic equals the global minimum broadcasts its
+  // restricting-cell diagnostics to all ranks
+  int has_min = 0;
+  for (int i=0; i<nblocal; ++i) {
+    if (my_blocks(i)->new_block_dt_hyperbolic_ == dt_hyperbolic) { has_min = 1; break; }
+  }
+  int root_key = has_min ? Globals::my_rank : Globals::nranks;
+  int root_rank = 0;
+  MPI_Allreduce(&root_key, &root_rank, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+  if (root_rank >= Globals::nranks) root_rank = 0;
+  int diag[6] = {dt_hyp_limiter, dt_hyp_dir, dt_hyp_i, dt_hyp_j, dt_hyp_k, dt_hyp_dust_id};
+  MPI_Bcast(diag, 6, MPI_INT, root_rank, MPI_COMM_WORLD);
+  dt_hyp_limiter = diag[0];
+  dt_hyp_dir = diag[1];
+  dt_hyp_i = diag[2];
+  dt_hyp_j = diag[3];
+  dt_hyp_k = diag[4];
+  dt_hyp_dust_id = diag[5];
 #endif
 
   if (time < tlim && (tlim - time) < dt) // timestep would take us past desired endpoint
@@ -2458,6 +2493,14 @@ void Mesh::OutputCycleDiagnostics() {
           std::cout << "\ndt_hyperbolic=" << dt_hyperbolic << " ratio="
                     << std::setprecision(ratio_precision) << ratio
                     << std::setprecision(dt_precision);
+          // report which fluid, cell, and direction limit dt_hyperbolic
+          if (dt_hyp_limiter == 1)
+            std::cout << " d(" << dt_hyp_dust_id << ")";
+          else
+            std::cout << " g";
+          std::cout << " x" << dt_hyp_dir
+                    << " (" << dt_hyp_i << ", " << dt_hyp_j << ", " << dt_hyp_k
+                    << ")";
           ratio = dt / dt_parabolic;
           std::cout << "\ndt_parabolic=" << dt_parabolic << " ratio="
                     << std::setprecision(ratio_precision) << ratio
