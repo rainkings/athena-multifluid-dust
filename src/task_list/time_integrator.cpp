@@ -41,6 +41,19 @@
 #include "../scalars/scalars.hpp"
 #include "task_list.hpp"
 
+// Externally-linked problem-generator parameter (defined at file scope in
+// disk_snowline_*.cpp): the dust fluids are only advanced once time >=
+// dust_start_injection, to avoid paying the dustfluid cost during the long
+// pre-injection gas-only phase.
+extern Real dust_start_injection;
+
+// True when the dust fluids should not yet be advanced (before injection time).
+// Uniform across all blocks (same mesh time + same threshold), so it is MPI-safe
+// to skip the whole dustfluids pipeline consistently.
+static bool DustFluidsInactive(MeshBlock *pmb) {
+  return pmb->pmy_mesh->time < dust_start_injection;
+}
+
 //----------------------------------------------------------------------------------------
 //! TimeIntegratorTaskList constructor
 
@@ -3287,7 +3300,7 @@ TaskStatus TimeIntegratorTaskList::AddSourceTermsCRTC(MeshBlock *pmb, int stage)
 
 TaskStatus TimeIntegratorTaskList::CalculateDustFluidsFlux(MeshBlock *pmb, int stage) {
 
-  if (SKIP_DF) return TaskStatus::next;
+  if (DustFluidsInactive(pmb)) return TaskStatus::next;
 
   DustFluids *pdf = pmb->pdustfluids;
   if (stage <= nstages) {
@@ -3350,6 +3363,7 @@ TaskStatus TimeIntegratorTaskList::ReceiveAndCorrectDustFluidsFlux(MeshBlock *pm
 
 
 TaskStatus TimeIntegratorTaskList::IntegrateDustFluids(MeshBlock *pmb, int stage) {
+  if (DustFluidsInactive(pmb)) return TaskStatus::next;
   DustFluids *pdf = pmb->pdustfluids;
   // auto ApplyConservedDustFloors = [&](AthenaArray<Real> &cons_df) {
   //   for (int n = 0; n < NDUSTVARS; n += 4) {
@@ -3417,6 +3431,7 @@ TaskStatus TimeIntegratorTaskList::IntegrateDustFluids(MeshBlock *pmb, int stage
 //! Functions to add source terms
 
 TaskStatus TimeIntegratorTaskList::AddSourceTermsDustFluids(MeshBlock *pmb, int stage) {
+  if (DustFluidsInactive(pmb)) return TaskStatus::next;
   DustFluids *pdf = pmb->pdustfluids;
 
   // return if there are no source terms to be added
@@ -3449,6 +3464,7 @@ TaskStatus TimeIntegratorTaskList::AddSourceTermsDustFluids(MeshBlock *pmb, int 
 
 
 TaskStatus TimeIntegratorTaskList::SetPropertiesDustFluids(MeshBlock *pmb, int stage) {
+  if (DustFluidsInactive(pmb)) return TaskStatus::next;
   Hydro *ph = pmb->phydro;
   DustFluids *pdf = pmb->pdustfluids;
 
@@ -3483,6 +3499,7 @@ TaskStatus TimeIntegratorTaskList::SetPropertiesDustFluids(MeshBlock *pmb, int s
 
 
 TaskStatus TimeIntegratorTaskList::DiffuseDustFluids(MeshBlock *pmb, int stage) {
+  if (DustFluidsInactive(pmb)) return TaskStatus::next;
   Hydro      *ph  = pmb->phydro;
   DustFluids *pdf = pmb->pdustfluids;
 
@@ -3677,6 +3694,7 @@ TaskStatus TimeIntegratorTaskList::ReceiveDustFluidsFluxShear(MeshBlock *pmb, in
 //! Function to calculate the drags between dust and gas
 
 TaskStatus TimeIntegratorTaskList::DustGasDrag(MeshBlock *pmb, int stage) {
+  if (DustFluidsInactive(pmb)) return TaskStatus::next;
   DustFluids *pdf = pmb->pdustfluids;
   Hydro      *ph  = pmb->phydro;
 

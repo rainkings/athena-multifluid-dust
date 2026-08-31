@@ -102,7 +102,7 @@ bool PhaseChange_Flag, ACTIVE;
 
 Real x1min, x1max, x2min, x2max;
 Real damping_rate, radius_inner_damping, radius_outer_damping, inner_ratio_region, outer_ratio_region, inner_width_damping, outer_width_damping, theta_upper_damping, theta_lower_damping, upper_altitude_damping, lower_altitude_damping;
-Real min_tol, max_dfvdt, dust_start_injection, injection_Tsoft, t_restart;
+Real min_tol, max_dfvdt, injection_Tsoft, t_restart;
 Real kappa0, t_iterate, beta, f_vi, damping_ratio;
 AthenaArray<Real> v_frag;
 
@@ -185,6 +185,10 @@ void MyConductivity(HydroDiffusion *phdif, MeshBlock *pmb,
 
 Real CompressedX2(Real x, RegionSize rs);
 } // namespace
+
+// Exposed at file scope (external linkage) so the task-list code can read it:
+// the dust fluids are only advanced once time >= dust_start_injection.
+Real dust_start_injection;
 
 // User-defined boundary conditions for disk simulations
 void DiskInnerX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
