@@ -97,13 +97,13 @@ Real M_dot_g, L_star; // M_sun/yr
 
 Real initial_D2G[NDUSTFLUIDS], Stokes_number[NDUSTFLUIDS], Hratio[NDUSTFLUIDS], weight_dust[NDUSTFLUIDS], p2g_flux[NDUSTFLUIDS];
 bool mom_correct_Flag, Isothermal_Flag, Damping_Flag, Theta_Gas_Damping_Flag ,Allow_T_change_Flag, Relaxation_Flag;
-bool PhaseChange_Flag;
+bool PhaseChange_Flag, ACTIVE;
 
 
 Real x1min, x1max, x2min, x2max;
 Real damping_rate, radius_inner_damping, radius_outer_damping, inner_ratio_region, outer_ratio_region, inner_width_damping, outer_width_damping, theta_upper_damping, theta_lower_damping, upper_altitude_damping, lower_altitude_damping;
 Real min_tol, max_dfvdt, dust_start_injection, injection_Tsoft, t_restart;
-Real kappa0, t_iterate, beta, f_vi;
+Real kappa0, t_iterate, beta, f_vi, damping_ratio;
 AthenaArray<Real> v_frag;
 
 namespace UserOutVar {
@@ -218,6 +218,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   Allow_T_change_Flag = pin->GetBoolean("problem",   "Allow_T_change_Flag");
   Relaxation_Flag    = pin->GetBoolean("problem",   "Relaxation_Flag");
   PhaseChange_Flag  = pin->GetBoolean("problem",   "PhaseChange_Flag");
+  ACTIVE = pin->GetBoolean("problem",   "ACTIVE");
 
   // Get parameters for initial density and velocity
   rho0 = pin->GetReal("problem", "rho0");
@@ -228,6 +229,8 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   t_iterate = pin->GetReal("problem", "t_iterate");
   beta = pin->GetReal("problem", "beta");
   f_vi = pin->GetOrAddReal("problem", "f_vi", 1.0);
+
+  damping_ratio = pin->GetOrAddReal("problem", "damping_ratio", 0.4);
 
   v_frag.NewAthenaArray(N_Z);
   for (int p = 0; p<N_Z; ++p){
@@ -295,7 +298,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
 
   // upper_altitude_damping = 0.04*std::sqrt(cs2_0);
   // lower_altitude_damping = 0.02*std::sqrt(cs2_0);
-  upper_altitude_damping = (x2max-x2min)*0.4;
+  upper_altitude_damping = (x2max-x2min)*damping_ratio;
   lower_altitude_damping = (x2max-x2min)*0.1;
 
   theta_upper_damping = x2min + upper_altitude_damping;
@@ -378,6 +381,12 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
     std::cout << "alpha_vis = " << alpha_vis << std::endl;
 
     std::cout << "dust_start_injection = " << dust_start_injection << std::endl;
+
+    if (ACTIVE){
+      std::cout << "ACTIVE disk simulation." << std::endl;
+    } else {
+      std::cout << "PASSIVE disk simulation." << std::endl;
+    }
 
     // print some informations for multi-population dust
     if (N_P > 1) {
@@ -798,7 +807,12 @@ void Mesh::UserWorkInLoop() {
               for (int n=0; n<N_Z*N_P; ++n) {
                 rho_peb += pmb->pdustfluids->df_w(4*n,k,j,i);
               }
-              Real fv = pmb->pdustfluids->df_w(4*(vapor_id),k,j,i) / rho_gas;
+
+              Real fv = 0.0;
+              if (N_P>0){
+                fv = pmb->pdustfluids->df_w(4*(vapor_id),k,j,i) / rho_gas;
+              }
+
               Real kappa = Get_kappa(rho_peb/rho_gas, fv);
 
               // store rhokappa
@@ -863,7 +877,10 @@ void Mesh::UserWorkInLoop() {
                 for (int n=0; n<N_Z*N_P; ++n) {
                   rho_peb += pmb->pdustfluids->df_w(4*n,k,j,i);
                 }
-                Real fv = pmb->pdustfluids->df_w(4*(vapor_id),k,j,i) / rho_gas;             
+                Real fv = 0.0;
+                if (N_P>0){
+                  fv = pmb->pdustfluids->df_w(4*(vapor_id),k,j,i) / rho_gas;
+                }
                 Real H_gas = std::pow(rad/r0, qvalue/2.0 + 1.5);
                 Real cos_inc = (qvalue/2.0 + 0.5) * (4.0*H_gas/rad); // cosine of the incident angle to disk surface
 
@@ -874,7 +891,10 @@ void Mesh::UserWorkInLoop() {
                 Real omega = std::sqrt(gm0/std::pow(rad,3.0));
                 Real q_irr = E0* f_vi*rhokappa(tk,tj,ti)*(std::exp(-f_vi*tau_vi(tk,tj,ti)/cos_inc) + std::exp(-f_vi*(tau_inf - tau_vi(tk,tj,ti))/cos_inc));
                 Real nu_gas = pmb->phydro->hdif.nu(HydroDiffusion::DiffProcess::alpha, k, j, i);
-                Real q_vis = 9.0/4.0 *rho_gas* (1.0-fv)* SQR(omega) *nu_gas; // only include viscous heating by H-He
+                Real q_vis = 0.0;
+                if (ACTIVE){
+                  q_vis = 9.0/4.0 *rho_gas* (1.0-fv)* SQR(omega) *nu_gas; // only include viscous heating by H-He
+                }
                 ////////////////////
                 // including latent heat
                 // (Yu, 2025-11-16) Updated to use PhaseChange module arrays
@@ -979,7 +999,10 @@ void Mesh::UserWorkInLoop() {
                 for (int n=0; n<N_Z*N_P; ++n) {
                   rho_peb += pmb->pdustfluids->df_w(4*n,k,j,i);
                 }
-                Real fv = pmb->pdustfluids->df_w(4*(vapor_id),k,j,i) / rho_gas;
+                Real fv = 0.0;
+                if (N_P>0){
+                  fv = pmb->pdustfluids->df_w(4*(vapor_id),k,j,i) / rho_gas;
+                }
                 Real kappa = Get_kappa(rho_peb/rho_gas, fv);
                 Real F_inf = q_int_f(tk, mesh_size.nx2+NGHOST, ti);
                 Real T_eff = std::pow(F_inf/(Constants::sigma_cgs/UNIT_FLX), 0.25);
@@ -996,7 +1019,7 @@ void Mesh::UserWorkInLoop() {
                   // when do iteration for T, rho, don't need long relaxing timescale
                   t_cool = 50.0/ omega_dyn;
                 } 
-                // else{
+                // else{eos_phase
                 //   // Lin & Youdin 2015:
                 //   Real C_v = ((0.71*2.5 / mu_H2 + 0.29*1.5/ mu_He)*(1.0-fv) + 3.0/mu_z*fv) /KELVIN; // in unit of k_B/m_H
                 //   // Real l_char = rad * l_cool; // characteristic pertubation scale
@@ -1061,12 +1084,15 @@ void Mesh::UserWorkInLoop() {
             int tj = static_cast<int>(loc.lx2)*pmb->block_size.nx2+(j-pmb->js) + NGHOST;
             int tk = static_cast<int>(loc.lx3)*pmb->block_size.nx3+(k-pmb->ks);
             // reset q_latent/q_diff and copy their values to output
-            pmb->user_out_var(UserOutVar::GasBase() + UserOutVar::kGasLatentHeating, k, j, i)
-              = pmb->pphase_change->q_latent(k,j,i);
             pmb->user_out_var(UserOutVar::GasBase() + UserOutVar::kGasDiffusiveHeating, k, j, i)
               = q_diff(tk,tj,ti);
-            pmb->pphase_change->q_latent(k,j,i) = 0.0;
             q_diff(tk,tj,ti) = 0.0;
+
+            if (pmb->pphase_change != nullptr) {
+              pmb->user_out_var(UserOutVar::GasBase() + UserOutVar::kGasLatentHeating, k, j, i)
+                = pmb->pphase_change->q_latent(k,j,i);
+              pmb->pphase_change->q_latent(k,j,i) = 0.0;
+            }
           }
         }
       }
@@ -1097,7 +1123,10 @@ void Mesh::UserWorkInLoop() {
             GetCylCoord(pmb->pcoord, rad, phi, z, i, j, k);
             Real dx2 = pmb->pcoord->dx2f(j)* pmb->pcoord->x1v(i);
             Real grav_z = -gm0*z/std::pow(rad,3.0);
-            Real fv = pmb->pdustfluids->df_w(4*(vapor_id),k,j,i) / pmb->phydro->w(IDN,k,j,i);
+            Real fv = 0.0;
+            if (N_P > 0){
+              fv = pmb->pdustfluids->df_w(4*(vapor_id),k,j,i) / pmb->phydro->w(IDN,k,j,i);
+            }
             Real mu = Get_mu(fv);
 
             int_1(tk,tj,ti) = mu*KELVIN*grav_z/Tem_active(tk,tj,ti) *dx2 + int_1(tk,tj-1,ti);
@@ -1195,7 +1224,10 @@ void Mesh::UserWorkInLoop() {
             if(time > t_iterate and pmb->pbval->block_bcs[BoundaryFace::inner_x1] == BoundaryFlag::user and x1 < x1min){
               Real x1_active = pmb->pcoord->x1v(pmb->is);
               Real x1_ghost = pmb->pcoord->x1v(i);
-              rho_z(tk,tj,ti) = (pmb->phydro->w(IDN,k,j,pmb->is) -pmb->pdustfluids->df_w(4*(vapor_id),k,j,pmb->is)) * SQR(x1_active)/SQR(x1_ghost);
+              rho_z(tk,tj,ti) = (pmb->phydro->w(IDN,k,j,pmb->is)) * SQR(x1_active)/SQR(x1_ghost);
+              if (N_P > 0){
+                rho_z(tk,tj,ti) -= pmb->pdustfluids->df_w(4*(vapor_id),k,j,pmb->is) * SQR(x1_active)/SQR(x1_ghost);
+              }
               // rho_z(tk,tj,ti) = std::exp(2.0*std::log(pmb->phydro->w(IDN, k, j, i+1)) - std::log(pmb->phydro->w(IDN, k, j, i+2)));
             }
             // outer bc
@@ -1393,13 +1425,22 @@ void MeshBlock::UserWorkInLoop(){
         if(i < is or i > ie or j < js or j > je){
           Real E_kg = 0.5*(SQR(gas_vel1) + SQR(gas_vel2) + SQR(gas_vel3))*gas_den;
           Real rhoe_g = phydro->u(IEN,k,j,i) - E_kg;
-          Real fv = pdustfluids->df_w(4*(vapor_id), k, j, i)/gas_den;
-          Real T_from_erg = pphase_change->Get_T_rhoe_g(rhoe_g, gas_den,fv);
+
+          // pure gas case: 
+          Real fv = 0.0; 
+          Real e = rhoe_g/gas_den;
+          Real T_from_erg =  e*KELVIN/(1.0/mu_H2*0.71*2.5 + 1.0/mu_He*0.29*1.5);
+
+          if (N_P>0){
+            fv = pdustfluids->df_w(4*(vapor_id), k, j, i)/gas_den;
+            T_from_erg = pphase_change->Get_T_rhoe_g(rhoe_g, gas_den,fv);
+          }
           
           phydro->Tem(k, j, i) = T_from_erg;          
         }
 
-        if (N_P == 0) continue;
+        if (N_P <= 0) continue;
+
         // copy gas velocity to tracer;
         int dust_id = vapor_id;
         int rho_id  = 4*dust_id;
@@ -1570,12 +1611,15 @@ void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin){
       for (int i=il; i<=iu; ++i) {
         const Real &rho_g = phydro->w(IDN,k,j,i);
         const Real &press = phydro->w(IPR,k,j,i);
-        const Real &rho_v = pdustfluids->df_w(4*(vapor_id),k,j,i);
         Real E_kg = 0.5*(SQR(phydro->u(IM1,k,j,i)) + SQR(phydro->u(IM2,k,j,i)) + SQR(phydro->u(IM3,k,j,i)))/phydro->u(IDN,k,j,i);
         Real rhoe_g = phydro->u(IEN,k,j,i) - E_kg;
-        Real fv;
+        Real fv = 0.0;
+        
+        if (N_P > 0){
+          const Real &rho_v = pdustfluids->df_w(4*(vapor_id),k,j,i);
+          fv = rho_v/rho_g;
+        }
 
-        fv = rho_v/rho_g;
         Real T;
         if (pphase_change != nullptr) {
           T = pphase_change->Get_T_rhoe_g(rhoe_g, rho_g, fv);
@@ -1623,10 +1667,16 @@ void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin){
             user_out_var(dust_offset + UserOutVar::kDustSilFluxX2, k, j, i)
               = pdustfluids->df_flux[X2DIR](4*(p*N_Z + 1),k,j,i);
           }
-            user_out_var(UserOutVar::ExtraBase() + UserOutVar::kMaxPebbleMass, k, j, i)
-              = prelax->mmax_array(k, j, i)*punit->code_mass_cgs; // maximum pebble mass in the cell [code_mass]
-            user_out_var(UserOutVar::ExtraBase() + UserOutVar::kRelaxationTime, k, j, i)
-              = prelax->t_relax(k, j, i)*punit->code_time_cgs; // relaxation timescale [code_time]
+          user_out_var(UserOutVar::ExtraBase() + UserOutVar::kMaxPebbleMass, k, j, i)
+            = prelax->mmax_array(k, j, i)*punit->code_mass_cgs; // maximum pebble mass in the cell [code_mass]
+          user_out_var(UserOutVar::ExtraBase() + UserOutVar::kRelaxationTime, k, j, i)
+            = prelax->t_relax(k, j, i)*punit->code_time_cgs; // relaxation timescale [code_time]
+          user_out_var(UserOutVar::VaporBase() + UserOutVar::kVaporDiffusivity, k, j, i)
+            = pdustfluids->nu_dustfluids_array(vapor_id,k,j,i);
+          user_out_var(UserOutVar::VaporBase() + UserOutVar::kVaporFluxX1, k, j, i)
+            = pdustfluids->df_flux[X1DIR](4*(vapor_id),k,j,i);
+          user_out_var(UserOutVar::VaporBase() + UserOutVar::kVaporFluxX2, k, j, i)
+            = pdustfluids->df_flux[X2DIR](4*(vapor_id),k,j,i);
         }
         // user_out_var(4,k,j,i) = pdustfluids->dfv_dt(k,j,i);
         
@@ -1638,12 +1688,6 @@ void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin){
           = phydro->flux[X1DIR](IDN,k,j,i);
         user_out_var(UserOutVar::GasBase() + UserOutVar::kGasFluxX2, k, j, i)
           = phydro->flux[X2DIR](IDN,k,j,i);
-        user_out_var(UserOutVar::VaporBase() + UserOutVar::kVaporDiffusivity, k, j, i)
-          = pdustfluids->nu_dustfluids_array(vapor_id,k,j,i);
-        user_out_var(UserOutVar::VaporBase() + UserOutVar::kVaporFluxX1, k, j, i)
-          = pdustfluids->df_flux[X1DIR](4*(vapor_id),k,j,i);
-        user_out_var(UserOutVar::VaporBase() + UserOutVar::kVaporFluxX2, k, j, i)
-          = pdustfluids->df_flux[X2DIR](4*(vapor_id),k,j,i);
 
       }
     }
@@ -1864,12 +1908,7 @@ void LocalIsothermalEOS(MeshBlock *pmb, const Real time, const Real dt, const At
           // get pressure of local temperature
           Real mu = Get_mu(fv);
           Real press = gas_dens * Tem /(KELVIN*mu);
-          Real gamma;
-          if (pmb->pphase_change != nullptr) {
-            gamma = pmb->peos->calc_gamma(fv);
-          } else {
-            gamma = gamma_gas;
-          }
+          Real gamma = pmb->peos->calc_gamma(fv);
           gas_erg    = press/(gamma-1.0) + gas_dens*0.5*(SQR(gas_vel1_1) + SQR(gas_vel2_1) + SQR(gas_vel3_1));
           gas_mom1   = gas_dens*gas_vel1_1;
           gas_mom2   = gas_dens*gas_vel2_1;
@@ -1922,10 +1961,10 @@ void RadiativeCondution(MeshBlock *pmb, const Real time, const Real dt, const At
           Real rad = pmb->pcoord->x1v(i);
           Real w_damp = 0.05*(x1max-x1min);
           Real f_decay_art = std::tanh(std::pow((rad-x1max)/w_damp ,2.0)); // outer bc decay
-          Real f_decay_art2 = std::tanh(std::pow((rad-1.1*x1min)/w_damp,2.0));
-          if(rad <= 1.1*x1min){
-            f_decay_art2 = 0.0;
-          }
+          Real f_decay_art2 = std::tanh(std::pow((rad-x1min)/w_damp,2.0));
+          // if(rad <= 1.1*x1min){
+          //   f_decay_art2 = 0.0;
+          // }
           Real f_decay_art3 = std::exp(-1.0/(tau_vi));
           pmb->pmy_mesh->ruser_mesh_data[8](tk, tj, ti) += dt/pmb->pmy_mesh->dt*(x1area(i+1)*x1flux(k,j,i+1) - x1area(i)*x1flux(k,j,i))/(-vol(i)) *f_decay_art*f_decay_art2*f_decay_art3;
           // if (dt <=0.0){
@@ -2107,8 +2146,6 @@ void MyConductivity(HydroDiffusion *phdif, MeshBlock *pmb,
     const AthenaArray<Real> &w, const AthenaArray<Real> &bc,
     int is, int ie, int js, int je, int ks, int ke) {
 
-  const bool has_dust = (pmb->pdustfluids != nullptr);
-
   for (int k=ks; k<=ke; ++k) { // include ghost zone
     for (int j=js; j<=je; ++j) { // prim, cons
 #pragma omp simd
@@ -2117,7 +2154,7 @@ void MyConductivity(HydroDiffusion *phdif, MeshBlock *pmb,
 
         const Real &gas_rho = w(IDN, k, j, i);
         Real fv = 0.0;
-        if (has_dust) {
+        if (N_P > 0) {
           fv = pmb->pdustfluids->df_w(4*vapor_id, k, j, i) / gas_rho;
         }
         if(std::isnan(fv) or (fv < 0.0)){
@@ -2470,7 +2507,10 @@ void DiskInnerX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
         Real &gas_pres_active = prim(IPR, k, j, il); 
 
         // take fv from active zone
-        Real fv = prim_df(4*(vapor_id), k, j, il)/gas_rho_active;
+        Real fv = 0.0;
+        if (N_P > 0){
+          fv = prim_df(4*(vapor_id), k, j, il)/gas_rho_active;
+        }
         
         // get midplane temperture
         int tk = 0; int ti = il-i;
@@ -2490,11 +2530,19 @@ void DiskInnerX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
           gas_rho_xy = DenProfileCyl_gas_fv_T(rad_ghost,phi_ghost,z_ghost,fv,Tem_mid);
         }
 
-        // simple and best practice:
-        gas_rho_ghost = gas_rho_xy/(1.0-fv);
-        gas_vel1_ghost = gas_vel1_active;
+        // The radial velocity of the ghost cell is anchored to the local viscous
+        // equilibrium inflow (Vr_ProfileCyl_gas_fv_T). This damps the radial
+        // "sloshing" mode at the inner edge that a transparent/copy boundary
+        // leaves undamped, while supplying the correct accretion rate -- so the
+        // edge surface density is maintained instead of drained. (The hard
+        // vr_ghost = 0 anchor also killed the oscillation, but it halved the
+        // physical accretion outflow through the inner face.)
+        Real vr_visc = Vr_ProfileCyl_gas_fv_T(rad_ghost, phi_ghost, z_ghost, fv, Tem_mid);
+        gas_rho_ghost  = gas_rho_xy/(1.0-fv);
+        gas_vel1_ghost = vr_visc;
+        // gas_vel1_ghost = gas_vel1_active;
         gas_vel2_ghost = gas_vel2_active;
-        gas_vel3_ghost = gas_vel3_active*x1_active / (x1_ghost);
+        gas_vel3_ghost = gas_vel3_active*x1_active/x1_ghost;
         // other bc.
         // gas_rho_ghost = std::exp(2.0*std::log(prim(IDN, k, j, il-i+1)) - std::log(prim(IDN, k, j, il-i+2)));
         // gas_rho_ghost = gas_rho_active*SQR(x1_active)/ SQR(x1_ghost);
@@ -2502,6 +2550,10 @@ void DiskInnerX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
         // gas_vel3_ghost = gas_vel3_active*SQR(x1_active) / SQR(x1_ghost);
 
         if (NON_BAROTROPIC_EOS){
+          // if (gas_vel1_active >= 0.0) {
+          //   // inflow blocked: zero pressure gradient across the inner face
+          //   gas_pres_ghost = gas_pres_active;
+          // } else {
           Real mu1 = Get_mu(fv);
           if(time < t_iterate){
             gas_pres_ghost = gas_rho_ghost*Tem_ghost/(mu1*KELVIN);
@@ -2510,10 +2562,13 @@ void DiskInnerX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
             // gas_pres_ghost = gas_rho_ghost*Tem_ghost/(mu1*KELVIN);
           }
           gas_pres_ghost = (gas_pres_ghost > pfloor) ? gas_pres_ghost : pfloor;
+          // }
         }
 
         // copy latent heat (not always necessary... depending on simulation domain):
-        pmb->pphase_change->q_latent(k,j,il-i) = pmb->pphase_change->q_latent(k,j,il);
+        if (pmb->pphase_change != nullptr){
+          pmb->pphase_change->q_latent(k,j,il-i) = pmb->pphase_change->q_latent(k,j,il);
+        }
 
         if (NDUSTFLUIDS > 0) {
           for (int n=0; n<N_P*N_Z+1; ++n) {
@@ -2752,7 +2807,10 @@ void DiskInnerX2(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, Athe
         Real &gas_pres_active = prim(IEN, k, jl, i);
 
         // gas_rho_ghost     = DenProfileCyl_gas(rad_ghost, phi_ghost, z_ghost);
-        Real fv = prim_df(4*(vapor_id), k, jl, i)/gas_rho_active;
+        Real fv =0.0;
+        if (N_P > 0){
+          fv = prim_df(4*(vapor_id), k, jl, i)/gas_rho_active;
+        }
         if (std::isnan(fv)){
           std::cout << "fv = nan in DiskInnerX2" << std::endl;
           quick_exit(1);
@@ -2862,51 +2920,55 @@ for (int k=kl; k<=ku; ++k) {
       // --- Inner radial damping zone ---
       // Damp vr toward equilibrium viscous profile near the inner boundary.
       // Covers ALL theta (including midplane) to stabilize mass flux where density is highest.
-      if (rad_arr(i) <= radius_inner_damping) {
-        // Radial taper: 1 at inner edge, 0 at radius_inner_damping
-        Real R_func = SQR((radius_inner_damping - rad_arr(i))*inv_inner_damp);
-        R_func = R_func > 1.0 ? 1.0 : R_func;
-
-        Real Tem_eq     = pmb->pmy_mesh->ruser_mesh_data[4](0,j,i);
-        Real fv = pmb->pdustfluids->df_w(4*(vapor_id), k, j, i)/prim(IDN, k, j, i);
-        Real gas_vel1_0 = Vr_ProfileCyl_gas_fv_T_pvalue(rad_arr(i), phi_arr(i), z_arr(i), fv, Tem_eq, pvalue, qvalue);
-
-        Real &gas_rho  = prim(IDN, k, j, i);
-        Real &gas_vel1 = prim(IM1, k, j, i);
-        Real &gas_vel2 = prim(IM2, k, j, i);
-        Real &gas_vel3 = prim(IM3, k, j, i);
-        Real &gas_pre  = prim(IPR, k, j, i);
-
-        Real &gas_dens = cons(IDN, k, j, i);
-        Real &gas_mom1 = cons(IM1, k, j, i);
-        Real &gas_mom2 = cons(IM2, k, j, i);
-        Real &gas_mom3 = cons(IM3, k, j, i);
-        Real &gas_erg  = cons(IEN, k, j, i);
-
-        Real Ek0 = 0.5*(SQR(gas_vel1) + SQR(gas_vel2) + SQR(gas_vel3))*gas_dens;
-
-        Real damp = damping_rate * R_func;
-        damp = damp > 1.0 ? 1.0 : damp;
-        Real delta_gas_rho  = 0.0;
-        Real delta_gas_vel1 = (gas_vel1_0 - gas_vel1)*damp;
-        Real delta_gas_vel2 = 0.0;
-        Real delta_gas_vel3 = 0.0;
-        Real delta_gas_pre  = 0.0;
-
-        gas_rho  += delta_gas_rho;
-        gas_vel1 += delta_gas_vel1;
-        gas_vel2 += delta_gas_vel2;
-        gas_vel3 += delta_gas_vel3;
-        gas_pre  += delta_gas_pre;
-
-        gas_dens = gas_rho;
-        gas_mom1 = gas_dens*gas_vel1;
-        gas_mom2 = gas_dens*gas_vel2;
-        gas_mom3 = gas_dens*gas_vel3;
-
-        Real Ek = 0.5*(SQR(gas_mom1) + SQR(gas_mom2) + SQR(gas_mom3))/gas_dens;
-        gas_erg = gas_erg - Ek0 + Ek;
-      }
+      // if (rad_arr(i) <= radius_inner_damping) {
+      //   // Radial taper: 1 at inner edge, 0 at radius_inner_damping
+      //   Real R_func = SQR((radius_inner_damping - rad_arr(i))*inv_inner_damp);
+      //   R_func = R_func > 1.0 ? 1.0 : R_func;
+      //
+      //   Real Tem_eq     = pmb->pmy_mesh->ruser_mesh_data[4](0,j,i);
+      //   Real fv =0.0;
+      //   if (N_P > 0){
+      //     fv = pmb->pdustfluids->df_w(4*(vapor_id), k, j, i)/prim(IDN, k, j, i);
+      //   }
+      //
+      //   Real gas_vel1_0 = Vr_ProfileCyl_gas_fv_T_pvalue(rad_arr(i), phi_arr(i), z_arr(i), fv, Tem_eq, pvalue, qvalue);
+      //
+      //   Real &gas_rho  = prim(IDN, k, j, i);
+      //   Real &gas_vel1 = prim(IM1, k, j, i);
+      //   Real &gas_vel2 = prim(IM2, k, j, i);
+      //   Real &gas_vel3 = prim(IM3, k, j, i);
+      //   Real &gas_pre  = prim(IPR, k, j, i);
+      //
+      //   Real &gas_dens = cons(IDN, k, j, i);
+      //   Real &gas_mom1 = cons(IM1, k, j, i);
+      //   Real &gas_mom2 = cons(IM2, k, j, i);
+      //   Real &gas_mom3 = cons(IM3, k, j, i);
+      //   Real &gas_erg  = cons(IEN, k, j, i);
+      //
+      //   Real Ek0 = 0.5*(SQR(gas_vel1) + SQR(gas_vel2) + SQR(gas_vel3))*gas_dens;
+      //
+      //   Real damp = damping_rate * R_func;
+      //   damp = damp > 1.0 ? 1.0 : damp;
+      //   Real delta_gas_rho  = 0.0;
+      //   Real delta_gas_vel1 = (gas_vel1_0 - gas_vel1)*damp;
+      //   Real delta_gas_vel2 = 0.0;
+      //   Real delta_gas_vel3 = 0.0;
+      //   Real delta_gas_pre  = 0.0;
+      //
+      //   gas_rho  += delta_gas_rho;
+      //   gas_vel1 += delta_gas_vel1;
+      //   gas_vel2 += delta_gas_vel2;
+      //   gas_vel3 += delta_gas_vel3;
+      //   gas_pre  += delta_gas_pre;
+      //
+      //   gas_dens = gas_rho;
+      //   gas_mom1 = gas_dens*gas_vel1;
+      //   gas_mom2 = gas_dens*gas_vel2;
+      //   gas_mom3 = gas_dens*gas_vel3;
+      //
+      //   Real Ek = 0.5*(SQR(gas_mom1) + SQR(gas_mom2) + SQR(gas_mom3))/gas_dens;
+      //   gas_erg = gas_erg - Ek0 + Ek;
+      // }
 
       if (x2 <= theta_upper_damping and x2 > x2min) {
         // See de Val-Borro et al. 2006 & 2007

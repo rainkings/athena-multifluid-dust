@@ -1,0 +1,187 @@
+<comment>
+problem   = disk_snowline_2D_RT_erg_2_twopop
+python3 configure.py --prob=disk_snowline_2D_RT_erg --ndustfluid=3 --flux=hllc -omp -hdf5 --hdf5_path=${hdf5path} -h5double --nghost=2 --coord=spherical_polar --eos=general/phase_change --cxx=g++
+
+<job>
+problem_id  = iceline      # problem ID: basename of output filenames
+
+<output1>
+file_type   = hdf5
+variable    = prim
+dt             = 50.0   # time increment between outputs
+ghost_zones = false
+
+<output2>
+file_type   = hdf5
+variable    = uov
+dt             = 50.0   # time increment between outputs
+ghost_zones = false
+
+<output3>
+file_type   = hst
+dt             = 50.0    # time increment between outputs
+
+<output4>
+file_type   = rst
+dt             = 50.0      # time increment between outputs
+
+<time>
+cfl_number     = 0.5            # The Courant, Friedrichs, & Lewy (CFL) Number
+nlim           = -1             # cycle limit
+tlim           = 200000         # time limit
+integrator     = vl2            # time integration algorithm
+xorder         = 2              # order of spatial reconstruction
+ncycle_out     = 5000           # interval for stdout summary info
+dt_diagnostics = 0              # interval (in STS stages) for stdout extra dt info
+
+
+<mesh>
+nx1         = 160             # Number of zones in X1-direction
+# x1min       = 2.36411802429
+x1min       = 3.94019670715               # minimum value of X1
+x1max       = 23.64118024275            # maximum value of X1
+#x1min       = 3.94019670715
+#x1max       = 23.64118024275 
+ix1_bc      = user           # Inner-X1 boundary condition flag
+ox1_bc      = user           # Outer-X1 boundary condition flag
+
+nx2         = 48             # Number of zones in X2-direction
+x2min       = 1.30           # minimum value of X2
+x2max       = 1.5707963267   # maximum value of X2
+ix2_bc      = reflecting      # Inner-X2 boundary condition flag
+ox2_bc      = reflecting      # Outer-X2 boundary condition flag
+x2rat       = -1
+
+nx3         = 1              # Number of zones in X3-direction
+x3min       = 0.             # minimum value of X3
+x3max       = 3.1415926535   # maximum value of X3
+ix3_bc      = periodic       # Inner-X3 boundary condition flag
+ox3_bc      = periodic       # Outer-X3 boundary condition flag
+
+num_threads = 64  
+
+<meshblock>
+nx1 = 10 
+nx2 = 12
+nx3 = 1
+
+<hydro>
+gamma           = 1.4289      # gamma = C_p/C_v
+iso_sound_speed = 1.0        # isothermal sound speed
+dfloor          = 1.e-10
+pfloor          = 1.e-10
+
+<orbital_advection>
+OAorder     = 2   # 0: w/o OA, 1: w/ OA (1st), 2: w/ OA (2nd)
+Omega0      = 1.0 # angular velocity of the system
+ 
+<dust>
+DustFeedback_Flag             = false           # The flag of dust feedback terms on gas, true or false.
+Diffusion_Flag                = true            # The flag of dust diffusion, true or false.
+Momentum_Diffusion_Flag       = false           # The flag of momentum correction of dust diffusion, true or false. The default value is false. It is valid with Diffusion_Flag = true.
+Dust_SoundSpeed_Flag          = false           # The Flag of sound speed of dust, true or false, cs_dust = sqrt(nu_dust/T_eddy). The default value is false. It is valid with Diffusion_Flag = true.
+Dissipation_Flag              = true            # The flag of gas energy dissipation from dust feedback. The default value is true. It is valid only if "DustFeedback_Flag = true" and "time >= time_drag".
+
+solver_id                     = 0               # The id of dust Riemann solver, from 0 to 3. The default value is 0. The "solver_id = 0" is for the penetrated solver, 1 for the non-penetrated solver, 2 for the HLLE solver without the sound speed of dust, 3 for the HLLE solver with the sound speed of dust.
+dffloor                       = 1.e-15           # The density floor for all dust fluids.
+dust_xorder                   = 2               #
+time_drag                     = 0.0             # The drag terms will be valid when time >= time_drag. There is no drag between gas and dust when time < time_drag. The default value is 0.0, it means that dust-gas drags are valid at the beginning of simulations.
+T_eddy                        = 1.0             # The turnover time of turbulent eddy, the default value is 1.0 .
+drag_method                   = 2nd-implicit
+
+mmin                          = 1.e-12
+vfrag_1                       = 1000 
+vfrag_2                       = 1000
+
+
+initial_D2G_1                 = 1.e-10      # small ice 
+Stokes_number_1               = 6.93e-5 
+Hratio_1                      = 0.99 
+m_p0_1                        = 6.7e-7 
+p2g_flux_1                    = 0.0000001
+
+initial_D2G_2                 = 1.e-10      # small silicate
+Stokes_number_2               = 6.93e-5 
+Hratio_2                      = 0.99 
+m_p0_2                        = 6.7e-7 
+p2g_flux_2                    = 0.0000001
+
+initial_D2G_3                 = 1.e-10      # large ice 
+Stokes_number_3               = 0.01
+Hratio_3                      = 0.5
+m_p0_3                        = 2.0         # initial pebble mass: in g
+p2g_flux_3                    = 0.015
+
+initial_D2G_4                 = 1.e-10      # large silicate
+Stokes_number_4               = 0.01
+Hratio_4                      = 0.5
+m_p0_4                        = 2      # initial pebble mass: in g
+p2g_flux_4                    = 0.015
+
+initial_D2G_5                 = 1.e-10      # vapor, tracer
+Stokes_number_5               = 1.e-8
+Hratio_5                      = 1.0
+
+initial_D2G_6                 = 1.e-10      # small number density
+Stokes_number_6               = 1.e-8
+Hratio_6                      = 1.0
+
+initial_D2G_7                 = 1.e-10      # large number density
+Stokes_number_7               = 1.e-8
+Hratio_7                      = 1.0
+
+<problem>
+### disk model
+gm0                           = 13213.18338
+GM                            = 13213.18338
+r0                            = 23.64118024
+rho0                          = 1.0
+cs2_0                         = 1.0
+T0                            = 150.0
+pvalue                        = -2.25
+qvalue                        = -0.5
+Isothermal_Flag               = true
+Allow_T_change_Flag           = true
+kappa0                        = 0.15     # opacity [cm^2/g] kappa_R
+f_vi                          = 2.5     # tau_vi / tau_R
+kappa_aniso                   = 1.0     # Turn on heat diffusion: > 0.0
+beta                          = 500.0   # "beta-cooling" omega^{-1}
+PhaseChange_Flag              = 1
+Relaxation_Flag               = 1
+T_relax_prefactor             = 1
+damping_ratio                 = 0.4
+
+### damping zone
+Damping_Flag                  = false
+Theta_Gas_Damping_Flag        = true
+inner_dampingregion_ratio     = 1.4
+outer_dampingregion_ratio     = 1.1
+damping_rate                  = 5.0
+
+### phase change
+min_tol                       = 1.e-10
+injection_Tsoft               = 1.0
+mom_correct_Flag              = 0
+
+### iceline model
+taus0                          = 0.03    # initial St
+alpha_vis                      = 0.001
+nu_slope                       = 1.0       
+M_dot_g                        = 1e-08   # M_sun/Yr
+L_star                         = 3.0     # L_sun
+p2g_flux                       = 0.8     # flx_peb / flx_gas
+
+### pebble properties
+f_ICE_inter0                   = 0.5     # ice abundance of pebbe
+rho_sil_inter                  = 3.0
+rho_ice_inter                  = 1.0
+
+### others:
+dust_start_injection           = 4000   # time to inject pebble from outer boundary
+t_iterate                      = 99.97   # initial iteration time
+
+<units>
+unit_system = custom
+mass_cgs    = 2.3202009900e+26
+length_cgs  = 1.8983553591e+12
+time_cgs    = 2.6097389234e+07

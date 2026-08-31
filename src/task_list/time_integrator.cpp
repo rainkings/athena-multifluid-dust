@@ -3286,6 +3286,9 @@ TaskStatus TimeIntegratorTaskList::AddSourceTermsCRTC(MeshBlock *pmb, int stage)
 }
 
 TaskStatus TimeIntegratorTaskList::CalculateDustFluidsFlux(MeshBlock *pmb, int stage) {
+
+  if (SKIP_DF) return TaskStatus::next;
+
   DustFluids *pdf = pmb->pdustfluids;
   if (stage <= nstages) {
     if (stage_wghts[stage-1].main_stage) {

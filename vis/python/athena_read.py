@@ -409,6 +409,17 @@ def athdf(filename, raw=False, data=None, quantities=None, dtype=None, level=Non
             raise AthenaError('Ghost zones detected but "num_ghost" keyword set to zero.')
         if num_ghost > 0 and not np.all(levels == max_level):
             raise AthenaError('Cannot use ghost zones with different refinement levels')
+        if num_ghost > 0:
+            # Make sure the file actually contains ghost zones before trying to
+            # stitch them; otherwise give a clear error instead of a cryptic one.
+            for d in range(3):
+                xf_dataset = 'x' + repr(d+1) + 'f'
+                if f[xf_dataset].shape[1] > 2:
+                    if f[xf_dataset][()].min() >= f.attrs['RootGridX' + repr(d+1)][0] \
+                            and f[xf_dataset][()].max() <= f.attrs['RootGridX' + repr(d+1)][1]:
+                        raise AthenaError(('Ghost zones requested ("num_ghost={0}") but the'
+                                           + ' file has no ghost zones; enable "ghost_zones'
+                                           + ' = true" for this output').format(num_ghost))
         nx_vals = []
         for d in range(3):
             if block_size[d] == 1 and root_grid_size[d] > 1:  # sum or slice
@@ -624,13 +635,25 @@ def athdf(filename, raw=False, data=None, quantities=None, dtype=None, level=Non
                 xmin = f.attrs['RootGridX' + repr(d)][0]
                 xmax = f.attrs['RootGridX' + repr(d)][1]
                 xrat_root = f.attrs['RootGridX' + repr(d)][2]
-                if xrat_root == -1.0 and face_func is None:
+                if xrat_root == -1.0 and face_func is None and num_ghost == 0:
                     raise AthenaError('Must specify user-defined face_func_{0}'.format(d))
-                elif face_func is not None:
+                elif xrat_root == -1.0:
                     if num_ghost > 0:
-                        raise AthenaError('Ghost zones incompatible with user-defined'
-                                          + ' coordinate spacing')
-                    data[xf] = face_func(xmin, xmax, xrat_root, nx+1)
+                        # Ghost zones: the file stores the true face coordinates
+                        # (computed by the user mesh generator plus any boundary
+                        # corrections), so read them directly from the file instead
+                        # of calling face_func, which cannot reproduce the
+                        # ghost-zone spacing.
+                        data[xf] = np.empty(nx + 1)
+                        for n_block in range(int((nx - 2*num_ghost)
+                                                 // (block_size[d-1] - 2*num_ghost))):
+                            sample_block = np.where(logical_locations[:, d-1]
+                                                    == n_block)[0][0]
+                            index_low = n_block * (block_size[d-1] - 2*num_ghost)
+                            index_high = index_low + block_size[d-1] + 1
+                            data[xf][index_low:index_high] = f[xf][sample_block, :]
+                    else:
+                        data[xf] = face_func(xmin, xmax, xrat_root, nx+1)
                 elif xrat_root == 1.0:
                     if np.all(levels == level):
                         data[xf] = np.empty(nx + 1)
