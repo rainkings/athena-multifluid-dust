@@ -23,3 +23,13 @@ namespace Globals {
 int my_rank;         // MPI rank of this process
 int nranks;          // total number of MPI ranks
 }
+
+namespace TimeProfile {
+// CPU-time profiling accumulators (see globals.hpp).
+double accum[NCAT] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+bool enabled = false;
+
+void Reset() {
+  for (int i = 0; i < NCAT; ++i) accum[i] = 0.0;
+}
+}

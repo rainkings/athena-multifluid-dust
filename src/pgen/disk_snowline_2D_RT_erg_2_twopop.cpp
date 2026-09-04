@@ -1349,7 +1349,8 @@ void Mesh::UserWorkInLoop() {
 
               Real sigma_peb = 2.0*Mdot_peb(dust_id) /(v_drift_peb * 2.0*PI*rad_active);
               Real cs0 = std::sqrt(Tem_mid/(mu_xy*KELVIN));
-              Real h_peb = Hratio[n]* cs0/std::sqrt(gm0/(rad_active*SQR(rad_active)));
+              // [26.09.01]Zhixuna: a bug here, replace "n" with "dust_id"
+              Real h_peb = Hratio[dust_id]* cs0/std::sqrt(gm0/(rad_active*SQR(rad_active)));
               Real rho_peb_mid = sigma_peb / (sqrt(2.0*PI)*h_peb);
               Real dust_rho = rho_peb_mid* std::exp(-0.5*SQR(z_active/h_peb));
               dust_rho = (dust_rho > dffloor) ? dust_rho : dffloor;
@@ -1416,6 +1417,11 @@ void MeshBlock::UserWorkInLoop(){
     // LowerWaveDampingGas(this, time, dt, il, iu, jl, ju, kl, ku, phydro->w, phydro->u);
   }
 
+  // scratch buffer for the per-cell pebble-mass update (allocated once, reused per
+  // cell to avoid a heap allocation inside the innermost loop)
+  AthenaArray<Real> rho_comps, s_p_array;
+  if (N_P > 0) rho_comps.NewAthenaArray(N_Z);
+
   for (int k=kl; k<=ku; ++k) {
     for (int j=jl; j<=ju; ++j) {
       for (int i=il; i<=iu; ++i) {
@@ -1443,7 +1449,11 @@ void MeshBlock::UserWorkInLoop(){
           phydro->Tem(k, j, i) = T_from_erg;          
         }
 
-        if (N_P <= 0) continue;
+        // Before dust_start_injection the dust fluids are frozen (st=1e-8,
+        // tiny densities), so skip the whole per-cell dust section -- the
+        // velocity copies, floors, conserved updates AND the O(N^2) pebble-mass
+        // sweep -- entirely. Gas work (wave damping, ghost temperature) is above.
+        if (N_P <= 0 || pmy_mesh->time < dust_start_injection) continue;
 
         // copy gas velocity to tracer;
         int dust_id = vapor_id;
@@ -1555,44 +1565,30 @@ void MeshBlock::UserWorkInLoop(){
           pdustfluids->df_u(v3_id, k, j, i) = dust_rho*pdustfluids->df_w(v3_id, k, j, i);
         }
 
-        //[26.06.02]Zhixuan: update the pebble mass array here
+        //[26.06.02]Zhixuan: update the pebble mass array here, per cell, folded
+        // into the single per-cell loop (avoids a second O(N) sweep). Being inside
+        // the dust section it is also skipped before dust_start_injection.
         if (pphase_change != nullptr) {
-          for (int k=kl; k<=ku; ++k) {
-            for (int j=jl; j<=ju; ++j) {
-              for (int i=il; i<=iu; ++i) {
-                AthenaArray<Real> rho_comps, s_p_array;
-                rho_comps.NewAthenaArray(N_Z);
-                for (int p = 0; p < N_P; ++p) {
-                  for (int z = 0; z < N_Z; ++z) {
-                    Real dust_rho_id = N_Z * p + z;
-                    rho_comps(z) = pdustfluids->df_u(4*dust_rho_id, k, j, i);
-                  }
-
-                  int dustn_id = 4*(N_P*N_Z + 1 + p);
-                  Real &rho_Np_p = pdustfluids->df_u(dustn_id, k, j, i); // number density of the pebble 
-                  Real rho_refrac = rho_comps(rho_comps.GetDim1() - 1); // refractory (always the last one)
-
-                  // Derive m_p and s_p from rho_Np and current densities 
-                  Real &m_p = prelax->m_p_array(p, k, j, i);
-                  // if (rho_refrac > dffloor and rho_Np_p > dffloor){
-                    if (N_Z >= 2){
-                        m_p = pphase_change->Get_m_p_from_rho_Np(rho_comps, rho_Np_p); // [code_mass]
-                    } else{
-                        m_p = rho_refrac/rho_Np_p; // if only one composition, directly derive mass from density and number density
-                    }
-                  if (m_p<=0.0){
-                    m_p = prelax->m_p0_array(p);
-                  }
-                  // } else {
-                  //   m_p = prelax->m_p0_array(p); // fallback to initial mass if density or number density is too low
-                  // }
-
-                }
-               }
-              }
+          for (int p = 0; p < N_P; ++p) {
+            for (int z = 0; z < N_Z; ++z) {
+              Real dust_rho_id = N_Z * p + z;
+              rho_comps(z) = pdustfluids->df_u(4*dust_rho_id, k, j, i);
             }
+            int dustn_id = 4*(N_P*N_Z + 1 + p);
+            Real &rho_Np_p = pdustfluids->df_u(dustn_id, k, j, i); // number density of the pebble
+            Real rho_refrac = rho_comps(rho_comps.GetDim1() - 1); // refractory (always the last one)
+            // Derive m_p and s_p from rho_Np and current densities
+            Real &m_p = prelax->m_p_array(p, k, j, i);
+            if (N_Z >= 2){
+              m_p = pphase_change->Get_m_p_from_rho_Np(rho_comps, rho_Np_p); // [code_mass]
+            } else{
+              m_p = rho_refrac/rho_Np_p; // if only one composition, directly derive mass from density and number density
+            }
+            if (m_p<=0.0){
+              m_p = prelax->m_p0_array(p);
+            }
+          }
         }
-
 
       }
     }

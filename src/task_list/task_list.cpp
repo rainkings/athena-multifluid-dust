@@ -11,6 +11,7 @@
 
 // C++ headers
 //#include <vector> // formerly needed for vector of MeshBlock ptrs in DoTaskListOneStage
+#include <ctime>    // std::clock(), CLOCKS_PER_SEC
 
 // Athena++ headers
 #include "../athena.hpp"
@@ -21,6 +22,41 @@
 #ifdef OPENMP_PARALLEL
 #include <omp.h>
 #endif
+
+// Classify a task into a TimeProfile category based on its numeric id.
+// Dust-task ids happen to be the contiguous range PROPERTIES_DFS..RECV_DFSSH.
+namespace {
+int ProfCategory(const TaskID &id) {
+  using namespace HydroIntegratorTaskNames;
+  // Gas hydro evolution
+  if (id == CALC_HYDFLX || id == SEND_HYDFLX || id == RECV_HYDFLX ||
+      id == INT_HYD || id == SEND_HYD || id == RECV_HYD || id == SETB_HYD ||
+      id == SEND_HYDFLXSH || id == SEND_HYDSH || id == RECV_HYDFLXSH ||
+      id == RECV_HYDSH || id == DIFFUSE_HYD || id == CALC_HYDORB ||
+      id == SEND_HYDORB || id == RECV_HYDORB)
+    return TimeProfile::HYDRO;
+  // Dust fluids evolution
+  if (id == PROPERTIES_DFS || id == DIFFUSE_DFS || id == CALC_DFSFLX ||
+      id == SEND_DFSFLX || id == RECV_DFSFLX || id == INT_DFS ||
+      id == SRCTERM_DFS || id == DRAG_DFS || id == SEND_DFS || id == RECV_DFS ||
+      id == SETB_DFS || id == SEND_DFSFLXSH || id == SEND_DFSSH ||
+      id == RECV_DFSFLXSH || id == RECV_DFSSH)
+    return TimeProfile::DUSTFLUIDS;
+  // User explicit source terms (MySource)
+  if (id == SRC_TERM)
+    return TimeProfile::SOURCE;
+  // Conserved -> primitive conversion (gas + dust fluids)
+  if (id == CONS2PRIM)
+    return TimeProfile::CONS2PRIM;
+  // Physical boundary conditions
+  if (id == PHY_BVAL || id == CLEAR_ALLBND)
+    return TimeProfile::BVAL;
+  // Per-block user work (MeshBlock::UserWorkInLoop via the USERWORK task)
+  if (id == USERWORK)
+    return TimeProfile::USERWORK;
+  return TimeProfile::OTHER;
+}
+}  // namespace
 
 //----------------------------------------------------------------------------------------
 //! \fn TaskListStatus TaskList::DoAllAvailableTasks
@@ -38,8 +74,20 @@ TaskListStatus TaskList::DoAllAvailableTasks(MeshBlock *pmb, int stage, TaskStat
       // check if dependency clear
       if (ts.finished_tasks.CheckDependencies(taski.dependency)) {
         if (taski.lb_time) pmb->StartTimeMeasurement();
+        int prof_cat = -1;
+        clock_t prof_c0 = 0;
+        if (TimeProfile::enabled) {
+          prof_cat = ProfCategory(taski.task_id);
+          prof_c0 = std::clock();
+        }
         ret = (this->*task_list_[i].TaskFunc)(pmb, stage);
         if (taski.lb_time) pmb->StopTimeMeasurement();
+        if (TimeProfile::enabled && prof_cat >= 0) {
+          double dt_cpu =
+              static_cast<double>(std::clock() - prof_c0) / CLOCKS_PER_SEC;
+#pragma omp atomic
+          TimeProfile::accum[prof_cat] += dt_cpu;
+        }
         if (ret != TaskStatus::fail) { // success
           ts.num_tasks_left--;
           ts.finished_tasks.SetFinished(taski.task_id);

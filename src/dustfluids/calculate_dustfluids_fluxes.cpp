@@ -74,6 +74,7 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
             int dustn_id = N_P*N_Z + 1 + p;
             int sil_id = (p+1)*N_Z - 1; // silicate density for this pebble
             // std::cout <<"p = " << p << ", sil_id = " << sil_id << ", dustn_id = " << dustn_id << std::endl;
+            // std::cout <<"n = " << n << std::endl;
             // Real rho_sil = prim_df(4*sil_id, k, j, i);
             // Real rho_pop = 0.0;
             // for (int zi = 0; zi < N_Z; ++zi) {

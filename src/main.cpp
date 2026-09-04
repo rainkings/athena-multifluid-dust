@@ -449,6 +449,9 @@ int main(int argc, char *argv[]) {
     std::cout << "\nSetup complete, entering main loop...\n" << std::endl;
   }
 
+  // Switchable CPU-time profiling report (see globals.hpp: TimeProfile).
+  TimeProfile::enabled = pinput->GetOrAddBoolean("problem", "time_profile", false);
+
   clock_t tstart = clock();
 #ifdef OPENMP_PARALLEL
   double omp_start_time = omp_get_wtime();
@@ -458,6 +461,27 @@ int main(int argc, char *argv[]) {
          (pmesh->nlim < 0 || pmesh->ncycle < pmesh->nlim)) {
     if (Globals::my_rank == 0)
       pmesh->OutputCycleDiagnostics();
+
+    // Report the CPU-time breakdown (only when enabled) every ncycle_out cycles.
+    if (TimeProfile::enabled && pmesh->ncycle % pmesh->ncycle_out == 0) {
+      if (Globals::my_rank == 0) {
+        int nt = pmesh->GetNumMeshThreads();
+        double inv = (nt > 1) ? 1.0 / nt : 1.0;  // clock() sums across OMP threads
+        printf("[profile] ncycle=%d: hydro=%.2fs dust=%.2fs source=%.2fs"
+               " userwork=%.2fs cons2prim=%.2fs bval=%.2fs"
+               " usertask=%.2fs other=%.2fs  (CPU-sec, /%d threads)\n",
+               pmesh->ncycle,
+               TimeProfile::accum[TimeProfile::HYDRO] * inv,
+               TimeProfile::accum[TimeProfile::DUSTFLUIDS] * inv,
+               TimeProfile::accum[TimeProfile::SOURCE] * inv,
+               TimeProfile::accum[TimeProfile::USERWORKINLOOP] * inv,
+               TimeProfile::accum[TimeProfile::CONS2PRIM] * inv,
+               TimeProfile::accum[TimeProfile::BVAL] * inv,
+               TimeProfile::accum[TimeProfile::USERWORK] * inv,
+               TimeProfile::accum[TimeProfile::OTHER] * inv, nt);
+      }
+      TimeProfile::Reset();
+    }
 
     if (STS_ENABLED) {
       pmesh->sts_loc = TaskType::op_split_before;
@@ -529,7 +553,13 @@ int main(int argc, char *argv[]) {
         pststlist->DoTaskListOneStage(pmesh, stage);
     }
 
+    clock_t uwi_c0 = 0;
+    if (TimeProfile::enabled) uwi_c0 = std::clock();
     pmesh->UserWorkInLoop();
+    if (TimeProfile::enabled) {
+      double dt_cpu = static_cast<double>(std::clock() - uwi_c0) / CLOCKS_PER_SEC;
+      TimeProfile::accum[TimeProfile::USERWORKINLOOP] += dt_cpu;
+    }
 
     pmesh->ncycle++;
     pmesh->time += pmesh->dt;

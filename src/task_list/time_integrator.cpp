@@ -3319,6 +3319,7 @@ TaskStatus TimeIntegratorTaskList::CalculateDustFluidsFlux(MeshBlock *pmb, int s
 
 
 TaskStatus TimeIntegratorTaskList::SendDustFluidsFlux(MeshBlock *pmb, int stage) {
+  if (DustFluidsInactive(pmb)) return TaskStatus::next;
   DustFluids *pdf = pmb->pdustfluids;
 
   if (stage <= nstages) {
@@ -3336,6 +3337,7 @@ TaskStatus TimeIntegratorTaskList::SendDustFluidsFlux(MeshBlock *pmb, int stage)
 
 
 TaskStatus TimeIntegratorTaskList::ReceiveAndCorrectDustFluidsFlux(MeshBlock *pmb, int stage) {
+  if (DustFluidsInactive(pmb)) return TaskStatus::next;
   DustFluids *pdf = pmb->pdustfluids;
 
   if (stage <= nstages) {
@@ -3531,6 +3533,7 @@ TaskStatus TimeIntegratorTaskList::DiffuseDustFluids(MeshBlock *pmb, int stage) 
 
 
 TaskStatus TimeIntegratorTaskList::SendDustFluids(MeshBlock *pmb, int stage) {
+  if (DustFluidsInactive(pmb)) return TaskStatus::next;
   DustFluids *pdf = pmb->pdustfluids;
 
   if (stage <= nstages) {
@@ -3554,6 +3557,7 @@ TaskStatus TimeIntegratorTaskList::SendDustFluids(MeshBlock *pmb, int stage) {
 //! Function to receive DustFluids variables between MeshBlocks
 
 TaskStatus TimeIntegratorTaskList::ReceiveDustFluids(MeshBlock *pmb, int stage) {
+  if (DustFluidsInactive(pmb)) return TaskStatus::next;
   DustFluids *pdf = pmb->pdustfluids;
 
   bool ret_dust = false;
@@ -3577,6 +3581,7 @@ TaskStatus TimeIntegratorTaskList::ReceiveDustFluids(MeshBlock *pmb, int stage) 
 //! Function to set DustFluids boundaries
 
 TaskStatus TimeIntegratorTaskList::SetBoundariesDustFluids(MeshBlock *pmb, int stage) {
+  if (DustFluidsInactive(pmb)) return TaskStatus::next;
   DustFluids *pdf = pmb->pdustfluids;
 
   if (stage <= nstages) {
@@ -3597,6 +3602,7 @@ TaskStatus TimeIntegratorTaskList::SetBoundariesDustFluids(MeshBlock *pmb, int s
 //! Function to communicate DustFluids variables between MeshBlocks with shear
 
 TaskStatus TimeIntegratorTaskList::SendDustFluidsShear(MeshBlock *pmb, int stage) {
+  if (DustFluidsInactive(pmb)) return TaskStatus::next;
   DustFluids *pdf = pmb->pdustfluids;
 
   if (stage <= nstages) {
@@ -3614,6 +3620,7 @@ TaskStatus TimeIntegratorTaskList::SendDustFluidsShear(MeshBlock *pmb, int stage
 //! Function to communicate DustFluids variables between MeshBlocks with shear
 
 TaskStatus TimeIntegratorTaskList::ReceiveDustFluidsShear(MeshBlock *pmb, int stage) {
+  if (DustFluidsInactive(pmb)) return TaskStatus::next;
   DustFluids *pdf = pmb->pdustfluids;
 
   bool ret_diff = true;
@@ -3641,6 +3648,7 @@ TaskStatus TimeIntegratorTaskList::ReceiveDustFluidsShear(MeshBlock *pmb, int st
 //! Function to communicate DustFluids variables between MeshBlocks with shear
 
 TaskStatus TimeIntegratorTaskList::SendDustFluidsFluxShear(MeshBlock *pmb, int stage) {
+  if (DustFluidsInactive(pmb)) return TaskStatus::next;
   DustFluids *pdf = pmb->pdustfluids;
 
   if (stage <= nstages) {
@@ -3661,6 +3669,7 @@ TaskStatus TimeIntegratorTaskList::SendDustFluidsFluxShear(MeshBlock *pmb, int s
 //! Function to communicate DustFluids variables between MeshBlocks with shear
 
 TaskStatus TimeIntegratorTaskList::ReceiveDustFluidsFluxShear(MeshBlock *pmb, int stage) {
+  if (DustFluidsInactive(pmb)) return TaskStatus::next;
   DustFluids *pdf = pmb->pdustfluids;
 
   if (stage <= nstages) {
