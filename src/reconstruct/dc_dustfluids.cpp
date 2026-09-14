@@ -27,7 +27,9 @@
 void Reconstruction::DonorCellX1_DustFluids(const int k, const int j, const int il, const int iu,
                                  const AthenaArray<Real> &q,
                                  AthenaArray<Real> &ql, AthenaArray<Real> &qr) {
-  const int nu = q.GetDim4() - 1;
+  // Reconstruct only the momentum (real dust) fluids; the tracer rows
+  // (vapor, number densities) are advected through r_ and TracerUpwindFlux.
+  const int nu = 4*N_P*N_Z - 1;
 
   // compute L/R states for each variable
   for (int n=0; n<=nu; ++n) {
@@ -49,7 +51,9 @@ void Reconstruction::DonorCellX1_DustFluids(const int k, const int j, const int 
 void Reconstruction::DonorCellX2_DustFluids(const int k, const int j, const int il, const int iu,
                                  const AthenaArray<Real> &q,
                                  AthenaArray<Real> &ql, AthenaArray<Real> &qr) {
-  const int nu = q.GetDim4() - 1;
+  // Reconstruct only the momentum (real dust) fluids; the tracer rows
+  // (vapor, number densities) are advected through r_ and TracerUpwindFlux.
+  const int nu = 4*N_P*N_Z - 1;
   // compute L/R states for each variable
   for (int n=0; n<=nu; ++n) {
 #pragma omp simd
@@ -70,7 +74,9 @@ void Reconstruction::DonorCellX2_DustFluids(const int k, const int j, const int 
 void Reconstruction::DonorCellX3_DustFluids(const int k, const int j, const int il, const int iu,
                                  const AthenaArray<Real> &q,
                                  AthenaArray<Real> &ql, AthenaArray<Real> &qr) {
-  const int nu = q.GetDim4() - 1;
+  // Reconstruct only the momentum (real dust) fluids; the tracer rows
+  // (vapor, number densities) are advected through r_ and TracerUpwindFlux.
+  const int nu = 4*N_P*N_Z - 1;
   // compute L/R states for each variable
   for (int n=0; n<=nu; ++n) {
 #pragma omp simd

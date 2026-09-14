@@ -121,6 +121,12 @@ DustGasDrag::DustGasDrag(DustFluids *pdf, ParameterInput *pin) :
 }
 
 
+//! NOTE (tracer layout): only the VL2 integrators (VL2ImplicitFeedback /
+//! VL2ImplicitNoFeedback) are tracer-aware: their per-fluid loops are capped at
+//! NDUSTFLUIDS_MOM so vapor & number-density fluids are exempt from drag.
+//! The RK2/backward-Euler/TRBDF2/trapezoid/explicit paths below still drag
+//! tracer rows; see the banners inside those files before enabling them with
+//! a tracer layout (NDUSTFLUIDS > NDUSTFLUIDS_MOM).
 void DustGasDrag::DragIntegrate(const int stage, const Real dt,
       const AthenaArray<Real> &stopping_time,
       const AthenaArray<Real> &w, const AthenaArray<Real> &w_df,

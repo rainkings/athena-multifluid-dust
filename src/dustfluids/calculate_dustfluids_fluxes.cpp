@@ -118,7 +118,7 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
       } else {
         pmb->precon->PiecewiseParabolicX1_DustFluids(k, j, is-1, ie+1, prim_df, df_w_l_, df_w_r_);
         pmb->precon->PiecewiseParabolicX1(k, j, is-1, ie+1, r_, rl_, rr_); // tracer reconstruction (Yu, 2025-11-18)
-        for (int n=0; n<NDUSTVARS; ++n) {
+        for (int n=0; n<4*NDUSTFLUIDS_MOM; ++n) {
 #pragma omp simd
           for (int i=is; i<=ie+1; ++i) {
             pmb->peos->ApplyDustFluidsFloors(df_w_l_, n, k, j, i);
@@ -141,7 +141,7 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
       if(FLX_COR) {
         // Only apply flux correction at outer boundary of simulation domain
         if (pmb->pbval->block_bcs[BoundaryFace::outer_x1] == BoundaryFlag::user) {
-          for (int n=0; n<N_P*N_Z + 1; n++) { // exclude vapor [26.07.10]Zhixuan: set vapor flux to be 0
+          for (int n=0; n<NDUSTFLUIDS_MOM+ 1; n++) { // exclude vapor [26.07.10]Zhixuan: set vapor flux to be 0
 
             if (n == vapor_id) {
               x1flux(4*n,k,j,ie+1) = 0.0; // no inflx of vapor
@@ -173,7 +173,7 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
       // std::cout << x1flux(12,k,j,2) << std::endl; // debug
       // std::cout << rl_(3,2) << ", " << rr_(3,2) << std::endl; // debug
 
-      TracerUpwindFlux(k, j, is, ie+1, rl_, rr_, gas_mass_flux, x1flux);
+      TracerUpwindFlux(k, j, is, ie+1, 1, prim_df, rl_, rr_, gas_mass_flux, x1flux);
 
       if (order == 4) {
         for (int n=0; n<NDUSTVARS; n++) {
@@ -199,7 +199,7 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
     for (int k=kl; k<=ku; ++k) {
       for (int j=jl; j<=ju; ++j) {
         // Compute Laplacian of x1 face states
-        for (int n=0; n<NDUSTVARS; ++n) {
+        for (int n=0; n<4*N_P*N_Z; ++n) {
           pmb->pcoord->LaplacianX1(df_w_l3d_, laplacian_l_df_fc_, n, k, j, is, ie+1);
           pmb->pcoord->LaplacianX1(df_w_r3d_, laplacian_r_df_fc_, n, k, j, is, ie+1);
 #pragma omp simd
@@ -258,7 +258,7 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
       } else {
         pmb->precon->PiecewiseParabolicX2_DustFluids(k, js-1, il, iu, prim_df, df_w_l_, df_w_r_);
         pmb->precon->PiecewiseParabolicX2(k, js-1, il, iu, r_, rl_, rr_); // tracer reconstruction (Yu, 2025-11-18)
-        for (int n=0; n<NDUSTVARS; ++n) {
+        for (int n=0; n<4*N_P*N_Z; ++n) {
 #pragma omp simd
           for (int i=il; i<=iu; ++i) {
             pmb->peos->ApplyDustFluidsFloors(df_w_l_, n, k, js-1, i);
@@ -277,7 +277,7 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
         } else {
           pmb->precon->PiecewiseParabolicX2_DustFluids(k, j, il, iu, prim_df, df_w_lb_, df_w_r_);
           pmb->precon->PiecewiseParabolicX2(k, j, il, iu, r_, rlb_, rr_); // tracer reconstruction (Yu, 2025-11-18)
-          for (int n=0; n<NDUSTVARS; ++n) {
+          for (int n=0; n<4*N_P*N_Z; ++n) {
 #pragma omp simd
             for (int i=il; i<=iu; ++i) {
               pmb->peos->ApplyDustFluidsFloors(df_w_lb_, n, k, j, i);
@@ -296,7 +296,7 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
           HLLERiemannSolverDustFluids(k, j, il, iu, 2, df_w_l_, df_w_r_, x2flux);
 
         // copy hydro mass flux to tracer. (Yu, 2025-11-18)
-        TracerUpwindFlux(k, j, il, iu, rl_, rr_, gas_mass_flux, x2flux);
+        TracerUpwindFlux(k, j, il, iu, 2, prim_df, rl_, rr_, gas_mass_flux, x2flux);
         if (order == 4) {
           for (int n=0; n<NDUSTVARS; n++) {
             for (int i=il; i<=iu; i++) {
@@ -325,7 +325,7 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
       for (int k=kl; k<=ku; ++k) {
         for (int j=js; j<=je+1; ++j) {
           // Compute Laplacian of x2 face states
-          for (int n=0; n<NDUSTVARS; ++n) {
+          for (int n=0; n<4*N_P*N_Z; ++n) {
             pmb->pcoord->LaplacianX2(df_w_l3d_, laplacian_l_df_fc_, n, k, j, il, iu);
             pmb->pcoord->LaplacianX2(df_w_r3d_, laplacian_r_df_fc_, n, k, j, il, iu);
 #pragma omp simd
@@ -379,7 +379,7 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
       } else {
         pmb->precon->PiecewiseParabolicX3_DustFluids(ks-1, j, il, iu, prim_df, df_w_l_, df_w_r_);
         pmb->precon->PiecewiseParabolicX3(ks-1, j, il, iu, r_, rl_, rr_); // tracer reconstruction (Yu, 2025-11-18)
-        for (int n=0; n<NDUSTVARS; ++n) {
+        for (int n=0; n<4*N_P*N_Z; ++n) {
 #pragma omp simd
           for (int i=il; i<=iu; ++i) {
             pmb->peos->ApplyDustFluidsFloors(df_w_l_, n, ks-1, j, i);
@@ -397,7 +397,7 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
         } else {
           pmb->precon->PiecewiseParabolicX3_DustFluids(k, j, il, iu, prim_df, df_w_lb_, df_w_r_);
           pmb->precon->PiecewiseParabolicX3(k, j, il, iu, r_, rlb_, rr_); // tracer reconstruction (Yu, 2025-11-18)
-          for (int n=0; n<NDUSTVARS; ++n) {
+          for (int n=0; n<4*N_P*N_Z; ++n) {
 #pragma omp simd
             for (int i=il; i<=iu; ++i) {
               pmb->peos->ApplyDustFluidsFloors(df_w_lb_, n, k, j, i);
@@ -415,7 +415,7 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
         else
           HLLERiemannSolverDustFluids(k, j, il, iu, 3, df_w_l_, df_w_r_, x3flux);
         // copy hydro mass flux to tracer. (Yu, 2025-11-18)
-        TracerUpwindFlux(k, j, il, iu, rl_, rr_, gas_mass_flux, x3flux);
+        TracerUpwindFlux(k, j, il, iu, 3, prim_df, rl_, rr_, gas_mass_flux, x3flux);
 
         if (order == 4) {
           for (int n=0; n<NDUSTVARS; n++) {
@@ -445,7 +445,7 @@ void DustFluids::CalculateDustFluidsFluxes(AthenaArray<Real> &prim_df, const int
       for (int k=ks; k<=ke+1; ++k) {
         for (int j=jl; j<=ju; ++j) {
           // Compute Laplacian of x3 face states
-          for (int n=0; n<NDUSTVARS; ++n) {
+          for (int n=0; n<4*N_P*N_Z; ++n) {
             pmb->pcoord->LaplacianX3(df_w_l3d_, laplacian_l_df_fc_, n, k, j, il, iu);
             pmb->pcoord->LaplacianX3(df_w_r3d_, laplacian_r_df_fc_, n, k, j, il, iu);
 #pragma omp simd

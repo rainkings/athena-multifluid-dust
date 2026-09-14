@@ -161,7 +161,10 @@ Real DustFluidsDiffusion::NewDiffusionDt() {
   AthenaArray<Real> &diff_t = diff_tot_;
   AthenaArray<Real> &len = dx1_, &dx2 = dx2_, &dx3 = dx3_;
 
-  for (int n=0; n<NDUSTFLUIDS; ++n) {
+  // [26.09.07]Zhixuan: since the diffusion among the populations are the same, so we don't need to consider the 
+  // number density diffusion into the time step calculation.
+  int n_nu = std::min(NDUSTFLUIDS, NDUSTFLUIDS_MOM + NVapor);
+  for (int n=0; n<n_nu; ++n) {
     dust_id = n;
     rho_id  = 4*dust_id;
     v1_id   = rho_id + 1;

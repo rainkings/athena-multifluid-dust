@@ -467,18 +467,32 @@ int main(int argc, char *argv[]) {
       if (Globals::my_rank == 0) {
         int nt = pmesh->GetNumMeshThreads();
         double inv = (nt > 1) ? 1.0 / nt : 1.0;  // clock() sums across OMP threads
+        double dust_tot = (TimeProfile::accum[TimeProfile::DFS_PROP] +
+                           TimeProfile::accum[TimeProfile::DFS_FLX] +
+                           TimeProfile::accum[TimeProfile::DFS_INT] +
+                           TimeProfile::accum[TimeProfile::DFS_DIFF] +
+                           TimeProfile::accum[TimeProfile::DFS_DRAG] +
+                           TimeProfile::accum[TimeProfile::DFS_SRC]) * inv;
         printf("[profile] ncycle=%d: hydro=%.2fs dust=%.2fs source=%.2fs"
                " userwork=%.2fs cons2prim=%.2fs bval=%.2fs"
                " usertask=%.2fs other=%.2fs  (CPU-sec, /%d threads)\n",
                pmesh->ncycle,
                TimeProfile::accum[TimeProfile::HYDRO] * inv,
-               TimeProfile::accum[TimeProfile::DUSTFLUIDS] * inv,
+               dust_tot,
                TimeProfile::accum[TimeProfile::SOURCE] * inv,
                TimeProfile::accum[TimeProfile::USERWORKINLOOP] * inv,
                TimeProfile::accum[TimeProfile::CONS2PRIM] * inv,
                TimeProfile::accum[TimeProfile::BVAL] * inv,
                TimeProfile::accum[TimeProfile::USERWORK] * inv,
                TimeProfile::accum[TimeProfile::OTHER] * inv, nt);
+        printf("[profile]  dust split: prop=%.2f flux=%.2f int=%.2f diff=%.2f"
+               " drag=%.2f src=%.2f (CPU-sec, /%d threads)\n",
+               TimeProfile::accum[TimeProfile::DFS_PROP] * inv,
+               TimeProfile::accum[TimeProfile::DFS_FLX] * inv,
+               TimeProfile::accum[TimeProfile::DFS_INT] * inv,
+               TimeProfile::accum[TimeProfile::DFS_DIFF] * inv,
+               TimeProfile::accum[TimeProfile::DFS_DRAG] * inv,
+               TimeProfile::accum[TimeProfile::DFS_SRC] * inv, nt);
       }
       TimeProfile::Reset();
     }

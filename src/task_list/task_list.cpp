@@ -35,13 +35,21 @@ int ProfCategory(const TaskID &id) {
       id == RECV_HYDSH || id == DIFFUSE_HYD || id == CALC_HYDORB ||
       id == SEND_HYDORB || id == RECV_HYDORB)
     return TimeProfile::HYDRO;
-  // Dust fluids evolution
-  if (id == PROPERTIES_DFS || id == DIFFUSE_DFS || id == CALC_DFSFLX ||
-      id == SEND_DFSFLX || id == RECV_DFSFLX || id == INT_DFS ||
-      id == SRCTERM_DFS || id == DRAG_DFS || id == SEND_DFS || id == RECV_DFS ||
-      id == SETB_DFS || id == SEND_DFSFLXSH || id == SEND_DFSSH ||
-      id == RECV_DFSFLXSH || id == RECV_DFSSH)
-    return TimeProfile::DUSTFLUIDS;
+  // Dust fluids evolution, split into sub-buckets
+  if (id == PROPERTIES_DFS)
+    return TimeProfile::DFS_PROP;
+  if (id == CALC_DFSFLX || id == SEND_DFSFLX || id == RECV_DFSFLX ||
+      id == SEND_DFSFLXSH || id == RECV_DFSFLXSH)
+    return TimeProfile::DFS_FLX;
+  if (id == INT_DFS || id == SEND_DFS || id == RECV_DFS || id == SETB_DFS ||
+      id == SEND_DFSSH || id == RECV_DFSSH)
+    return TimeProfile::DFS_INT;
+  if (id == DIFFUSE_DFS)
+    return TimeProfile::DFS_DIFF;
+  if (id == DRAG_DFS)
+    return TimeProfile::DFS_DRAG;
+  if (id == SRCTERM_DFS)
+    return TimeProfile::DFS_SRC;
   // User explicit source terms (MySource)
   if (id == SRC_TERM)
     return TimeProfile::SOURCE;

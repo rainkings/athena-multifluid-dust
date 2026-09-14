@@ -47,7 +47,9 @@ void Reconstruction::PiecewiseParabolicX1_DustFluids(
     const int k, const int j, const int il, const int iu,
     const AthenaArray<Real> &q,
     AthenaArray<Real> &ql, AthenaArray<Real> &qr) {
-  const int nu = q.GetDim4() - 1;
+  // Reconstruct only the momentum (real dust) fluids; the tracer rows
+  // (vapor, number densities) are advected through r_ and TracerUpwindFlux.
+  const int nu = 4*N_P*N_Z - 1;
 
   // CS08 constant used in second derivative limiter, >1 , independent of h
   const Real C2 = 1.25;
@@ -308,7 +310,9 @@ void Reconstruction::PiecewiseParabolicX2_DustFluids(
     const int k, const int j, const int il, const int iu,
     const AthenaArray<Real> &q,
     AthenaArray<Real> &ql, AthenaArray<Real> &qr) {
-  const int nu = q.GetDim4() - 1;
+  // Reconstruct only the momentum (real dust) fluids; the tracer rows
+  // (vapor, number densities) are advected through r_ and TracerUpwindFlux.
+  const int nu = 4*N_P*N_Z - 1;
   // CS08 constant used in second derivative limiter, >1 , independent of h
   const Real C2 = 1.25;
 
@@ -565,7 +569,9 @@ void Reconstruction::PiecewiseParabolicX3_DustFluids(
     const int k, const int j, const int il, const int iu,
     const AthenaArray<Real> &q,
     AthenaArray<Real> &ql, AthenaArray<Real> &qr) {
-  const int nu = q.GetDim4() - 1;
+  // Reconstruct only the momentum (real dust) fluids; the tracer rows
+  // (vapor, number densities) are advected through r_ and TracerUpwindFlux.
+  const int nu = 4*N_P*N_Z - 1;
   // CS08 constant used in second derivative limiter, >1 , independent of h
   const Real C2 = 1.25;
 

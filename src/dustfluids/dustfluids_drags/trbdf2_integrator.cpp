@@ -4,6 +4,14 @@
 // Licensed under the 3-clause BSD License, see LICENSE file for details
 //========================================================================================
 //! \file trbdf2_integrator.cpp
+//!  NOTE (tracer layout): the per-fluid loops below (n/idx over 1..NDUSTFLUIDS)
+//!  still treat vapor & number-density fluids (NDUSTFLUIDS_MOM..NDUSTFLUIDS-1)
+//!  as real dust: they read their stopping_time rows and relax their momentum
+//!  rows toward the gas. Only vl2implicit_integrator.cpp is tracer-aware (per-fluid
+//!  loops capped at NDUSTFLUIDS_MOM, plus inert identity rows for the matrix solve).
+//!  If you ever run this integrator with a tracer layout (NDUSTFLUIDS > NDUSTFLUIDS_MOM),
+//!  mirror the vl2implicit change here: cap every per-fluid loop at NDUSTFLUIDS_MOM
+//!  and set temp_A/temp_B identity diagonals for rows NDUSTFLUIDS_MOM+1..NDUSTFLUIDS.
 //! Trapezoid-Backward Differentiation Formula 2 drag time integrators
 
 // C++ headers

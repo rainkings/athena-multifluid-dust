@@ -108,7 +108,7 @@ AthenaArray<Real> v_frag;
 
 namespace UserOutVar {
 constexpr int kDustVarsPerPopulation = 7;
-constexpr int kVaporVars = 3;
+constexpr int kVaporVars = 5;
 constexpr int kGasVars = 8;
 constexpr int kPhaseChangeVars = 3;
 constexpr int kExtraVars = 2;
@@ -131,6 +131,10 @@ constexpr int kDustSilFluxX2 = 6;
 constexpr int kVaporDiffusivity = 0;
 constexpr int kVaporFluxX1 = 1;
 constexpr int kVaporFluxX2 = 2;
+// [code-side split] diffusive part of the vapor flux, output separately so that the
+// advective (tracer) part is exactly F_vap,total - F_vap,dif in post-processing.
+constexpr int kVaporFluxX1Dif = 3;
+constexpr int kVaporFluxX2Dif = 4;
 
 constexpr int kGasTemperature = 0;
 constexpr int kGasLatentHeating = 1;
@@ -480,6 +484,8 @@ void MeshBlock::InitUserMeshBlockData(ParameterInput *pin){
   SetUserOutputVariableName(offset_vapor + UserOutVar::kVaporDiffusivity, "dif");
   SetUserOutputVariableName(offset_vapor + UserOutVar::kVaporFluxX1, "flx_vap_x1");
   SetUserOutputVariableName(offset_vapor + UserOutVar::kVaporFluxX2, "flx_vap_x2");
+  SetUserOutputVariableName(offset_vapor + UserOutVar::kVaporFluxX1Dif, "flx_vap_dif_x1");
+  SetUserOutputVariableName(offset_vapor + UserOutVar::kVaporFluxX2Dif, "flx_vap_dif_x2");
 
   // Finally, output the variables related to gas 
   const int offset_gas = UserOutVar::GasBase();
@@ -1677,6 +1683,19 @@ void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin){
             = pdustfluids->df_flux[X1DIR](4*(vapor_id),k,j,i);
           user_out_var(UserOutVar::VaporBase() + UserOutVar::kVaporFluxX2, k, j, i)
             = pdustfluids->df_flux[X2DIR](4*(vapor_id),k,j,i);
+          // [code-side split] the diffusive part of the vapor flux, exactly as added
+          // into df_flux by AddDustFluidsDiffusionFlux. The remaining part of the
+          // flux row is the advective (tracer) flux, so
+          //   F_vap,adv = flx_vap_x1 - flx_vap_dif_x1
+          if (pdustfluids->dfdif.dustfluids_diffusion_defined) {
+            user_out_var(UserOutVar::VaporBase() + UserOutVar::kVaporFluxX1Dif, k, j, i)
+              = pdustfluids->dfdif.dustfluids_diffusion_flux[X1DIR](4*(vapor_id),k,j,i);
+            user_out_var(UserOutVar::VaporBase() + UserOutVar::kVaporFluxX2Dif, k, j, i)
+              = pdustfluids->dfdif.dustfluids_diffusion_flux[X2DIR](4*(vapor_id),k,j,i);
+          } else {
+            user_out_var(UserOutVar::VaporBase() + UserOutVar::kVaporFluxX1Dif, k, j, i) = 0.0;
+            user_out_var(UserOutVar::VaporBase() + UserOutVar::kVaporFluxX2Dif, k, j, i) = 0.0;
+          }
         }
         // user_out_var(4,k,j,i) = pdustfluids->dfv_dt(k,j,i);
         
@@ -2538,11 +2557,26 @@ void DiskInnerX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
         // vr_ghost = 0 anchor also killed the oscillation, but it halved the
         // physical accretion outflow through the inner face.)
         Real vr_visc = Vr_ProfileCyl_gas_fv_T(rad_ghost, phi_ghost, z_ghost, fv, Tem_mid);
-        gas_rho_ghost  = gas_rho_xy/(1.0-fv);
+        // Real v_gas_phi_ghost = VelProfileCyl_gas_fv_T(rad_ghost, phi_ghost, z_ghost, fv, Tem_mid);
+        // if (pmb->porb->orbital_advection_defined)
+        //   v_gas_phi_ghost -= vel_K;
+
+        Real rho_profile = gas_rho_xy/(1.0-fv);
+        // Real f_corr = gas_rho_active * gas_vel1_active * SQR(x1_active) / (rho_profile * vr_visc * SQR(x1_ghost));
+        // if (f_corr < 1.0 and f_corr > 0.0 ) {
+        //   f_corr = 1.0;
+        // } else if (f_corr >-1.0) {
+        //   f_corr = -1.0;
+        // }
+        gas_rho_ghost  = rho_profile;
         gas_vel1_ghost = vr_visc;
-        // gas_vel1_ghost = gas_vel1_active;
         gas_vel2_ghost = gas_vel2_active;
         gas_vel3_ghost = gas_vel3_active*x1_active/x1_ghost;
+
+
+        // gas_vel1_ghost = gas_vel1_active;
+        // gas_vel3_ghost = v_gas_phi_ghost;
+
         // other bc.
         // gas_rho_ghost = std::exp(2.0*std::log(prim(IDN, k, j, il-i+1)) - std::log(prim(IDN, k, j, il-i+2)));
         // gas_rho_ghost = gas_rho_active*SQR(x1_active)/ SQR(x1_ghost);
@@ -2586,10 +2620,18 @@ void DiskInnerX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
               Real &vapor_vel3_ghost = prim_df(v3_id,  k, j, il-i);
               
               // keep the consistency between gas and vapor.
+              Real fv_act2 = prim_df(4*(vapor_id), k, j, il+1)/prim(IDN, k, j, il+1);
+              Real fv_ghost = 2.0*fv - fv_act2;          // linear extrapolation of the concentration
+              if (fv_ghost < 0.0) {
+                fv_ghost = 0.0;
+              } else if (fv_ghost > 1.0) {
+                fv_ghost = 1.0;
+              }
+              
               vapor_vel1_ghost = gas_vel1_ghost;
               vapor_vel2_ghost = gas_vel2_ghost;
               vapor_vel3_ghost = gas_vel3_ghost;
-              vapor_rho_ghost = fv*gas_rho_ghost;
+              vapor_rho_ghost = fv_ghost*gas_rho_ghost;
               if (std::isnan(vapor_rho_ghost) or vapor_rho_ghost < 0.0){
                 std::cout << "vapor_rho_ghost = nan in DiskInnerX1" << std::endl;
                 quick_exit(1);

@@ -39,7 +39,9 @@ void Reconstruction::PiecewiseLinearX1_DustFluids(
   // set work arrays to shallow copies of scratch arrays
   AthenaArray<Real> &qc = scr1_ni_df_, &dql = scr2_ni_df_, &dqr = scr3_ni_df_,
                    &dqm = scr4_ni_df_;
-  const int nu = q.GetDim4() - 1;
+  // Reconstruct only the momentum (real dust) fluids; the tracer rows
+  // (vapor, number densities) are advected through r_ and TracerUpwindFlux.
+  const int nu = 4*N_P*N_Z - 1;
 
   // compute L/R slopes for each variable
   for (int n=0; n<=nu; ++n) {
@@ -119,7 +121,9 @@ void Reconstruction::PiecewiseLinearX2_DustFluids(
   // set work arrays to shallow copies of scratch arrays
   AthenaArray<Real> &qc = scr1_ni_df_, &dql = scr2_ni_df_,
                    &dqr = scr3_ni_df_, &dqm = scr4_ni_df_;
-  const int nu = q.GetDim4() - 1;
+  // Reconstruct only the momentum (real dust) fluids; the tracer rows
+  // (vapor, number densities) are advected through r_ and TracerUpwindFlux.
+  const int nu = 4*N_P*N_Z - 1;
 
   // compute L/R slopes for each variable
   for (int n=0; n<=nu; ++n) {
@@ -198,7 +202,9 @@ void Reconstruction::PiecewiseLinearX3_DustFluids(
   // set work arrays to shallow copies of scratch arrays
   AthenaArray<Real> &qc = scr1_ni_df_, &dql = scr2_ni_df_, &dqr = scr3_ni_df_,
                    &dqm = scr4_ni_df_;
-  const int nu = q.GetDim4() - 1;
+  // Reconstruct only the momentum (real dust) fluids; the tracer rows
+  // (vapor, number densities) are advected through r_ and TracerUpwindFlux.
+  const int nu = 4*N_P*N_Z - 1;
 
   // compute L/R slopes for each variable
   for (int n=0; n<=nu; ++n) {

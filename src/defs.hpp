@@ -129,6 +129,7 @@
 #define NDUSTGAS  (4+1)  // N dust + 1 gas
 #define N_P 1                // number of pebble sizes (phase change module)
 #define N_Z 2           // number of compositions per pebble (phase change module)
+#define NDUSTFLUIDS_MOM (N_P*N_Z)           // [26.09.06] Zhixuan: add the number of "real dustfluids"
 #define NSCALARS 0
 #define NSPECIES 0
 #define NGHOST 2

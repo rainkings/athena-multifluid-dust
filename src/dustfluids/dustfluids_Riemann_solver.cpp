@@ -35,7 +35,8 @@ void DustFluids::RiemannSolverDustFluids_Penetration(const int k, const int j, c
 
   Real df_w_li[(NDUSTVARS)], df_w_ri[(NDUSTVARS)];
 
-  for (int n=0; n<NDUSTFLUIDS; ++n) {
+  // [26.09.06]Zhixuan: only solve for "real dust"
+  for (int n=0; n<NDUSTFLUIDS_MOM; ++n) {
     int idust = n;
     int irho  = 4*idust;
 
@@ -81,7 +82,8 @@ void DustFluids::RiemannSolverDustFluids_noPenetration(const int k, const int j,
 
   Real df_w_li[(NDUSTVARS)], df_w_ri[(NDUSTVARS)], df_w_roe[(NDUSTVARS)];
 
-  for (int n=0; n<NDUSTFLUIDS; ++n) {
+  // [26.09.06]Zhixuan: only solve for "real dust"
+  for (int n=0; n<NDUSTFLUIDS_MOM; ++n) {
     int idust = n;
     int irho  = 4*idust;
 
@@ -136,43 +138,46 @@ void DustFluids::RiemannSolverDustFluids_noPenetration(const int k, const int j,
   return;
 }
 
-// vapor flux solver. (Yu, 2025-11-18)
+// vapor flux solver. (Yu, 2025-11-18) [26.09.06]Zhixuan: also the number density 
 void DustFluids::TracerUpwindFlux(const int k, const int j, const int il,
-  const int iu, // CoordinateDirection dir,
+  const int iu, const int dir, // CoordinateDirection dir (1,2,3)
+  const AthenaArray<Real> &prim_df,
   AthenaArray<Real> &r_l, AthenaArray<Real> &r_r, // 2D
   AthenaArray<Real> &gas_mass_flx,  // 3D
   AthenaArray<Real> &flx_out) { // 4D
 
-for (int n = vapor_id; n < NDUSTFLUIDS; ++n) {
-  int rho_id = 4 * n;
-  if (n == vapor_id) {
+  // Tracer fluids (vapor and number densities) are not Riemann-solved and their
+  // primitive rows are not reconstructed. So we also need to copy the momentum fluxes  
+  for (int n = vapor_id; n < NDUSTFLUIDS; ++n) {
+    int rho_id = 4 * n;
+    int v1_id  = rho_id + 1;
+    int v2_id  = rho_id + 2;
+    int v3_id  = rho_id + 3;
     for (int i = il; i <= iu; i++) {
-      Real fluid_flx = gas_mass_flx(k, j, i);
-      if (fluid_flx >= 0.0)
-        flx_out(rho_id, k, j, i) = fluid_flx * r_l(n, i);
-      else
-        flx_out(rho_id, k, j, i) = fluid_flx * r_r(n, i);
-    }
-  } else {
-      //[26.03.30]Zhixuan: copy the flux of refractory component to number density
-      //            Note that the r_l and r_r must in the units of 1/m_p, and here the m_p should be the silicate mass 
-      for (int i = il; i <= iu; i++) {
+      Real fluid_flx;
+      if (n == vapor_id) {
+        // vapor: carried by the gas
+        fluid_flx = gas_mass_flx(k, j, i);
+      } else {
+        // number density of population p: carried by the silicate fluid of p
         int p = n - 1 - N_P*N_Z;
-        int sil_id = (p+1)*N_Z - 1; // index of the last pebble in the same size bin as pebble p
-        Real fluid_flx = flx_out(sil_id*4, k, j, i); // use the flux of the last pebble in the same size bin as pebble p to determine the upwind direction for all pebbles in that size bin
-        // Real flx = flx_out(rho_id, k, j, i);
-
-        if (fluid_flx >= 0.0){
-          flx_out(rho_id, k, j, i) = fluid_flx * r_l(n, i);
-        } else{
-          flx_out(rho_id, k, j, i) = fluid_flx * r_r(n, i);
-        }
-        // std::cout << "Applying tracer upwind flux for vapor at (k,j,i)=(" << k << "," << j << "," << i << "): fluid_flx = " << fluid_flx << ", r_l = " << r_l(n, i) << ", r_r = " << r_r(n, i) << ", flx_out = " << flx_out(rho_id, k, j, i) << std::endl; // debug
-
+        int sil_id = (p+1)*N_Z - 1; // last (refractory) composition of population p
+        fluid_flx = flx_out(sil_id*4, k, j, i);
       }
+      // upwind cell along the face normal
+      int kk = k, jj = j, ii = i;
+      if (fluid_flx >= 0.0) {
+        if (dir == 1)      ii = i - 1;
+        else if (dir == 2) jj = j - 1;
+        else               kk = k - 1;
+      }
+      Real dens_flx = fluid_flx * (fluid_flx >= 0.0 ? r_l(n, i) : r_r(n, i));
+      flx_out(rho_id, k, j, i) = dens_flx;
+      // maybe don't need this
+      flx_out(v1_id,  k, j, i) = dens_flx * prim_df(v1_id, kk, jj, ii);
+      flx_out(v2_id,  k, j, i) = dens_flx * prim_df(v2_id, kk, jj, ii);
+      flx_out(v3_id,  k, j, i) = dens_flx * prim_df(v3_id, kk, jj, ii);
     }
-
-}
-
-return;
+  }
+  return;
 }

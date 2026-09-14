@@ -24,15 +24,16 @@
 // Reference: "Nurmerical Recipes, 3ed", Charpter 2.3, William H. Press et al. 2007
 // LUdecompose and Matrix Inversion
 void DustGasDrag::LUdecompose(const AthenaArray<Real> &a_matrix,
-                AthenaArray<Real> &index_vector, AthenaArray<Real> &lu_matrix) {
+                AthenaArray<Real> &index_vector, AthenaArray<Real> &lu_matrix,
+                const int nsize) {
 
   int is = pmb_->is, ie = pmb_->ie;
 
   //scale_arr.ZeroClear();
   index_vector.ZeroClear();
 
-  for (int m=0; m<NDUSTGAS; ++m) {
-    for (int n=0; n<NDUSTGAS; ++n) {
+  for (int m=0; m<nsize; ++m) {
+    for (int n=0; n<nsize; ++n) {
 #pragma omp simd
       for (int i=is; i<=ie; ++i) {
         lu_matrix(m, n, i) = a_matrix(m, n, i);
@@ -41,8 +42,8 @@ void DustGasDrag::LUdecompose(const AthenaArray<Real> &a_matrix,
   }
 
   //biggest_arr.ZeroClear();
-  //for (int m=0; m<NDUSTGAS; ++m) {     // Loop over rows to get the implicit scaling information
-    //for (int n=0; n<NDUSTGAS; ++n) {
+  //for (int m=0; m<nsize; ++m) {     // Loop over rows to get the implicit scaling information
+    //for (int n=0; n<nsize; ++n) {
 //#pragma omp simd
       //for (int i=is; i<=ie; ++i) {
         //if ((temp_arr(i) = std::abs(lu_matrix(m, n, i)) > biggest_arr(i)))
@@ -61,9 +62,10 @@ void DustGasDrag::LUdecompose(const AthenaArray<Real> &a_matrix,
     //}
   //}
 
-  for (int l=0; l<NDUSTGAS; ++l) {   // This is the outermost lmn loop
+  for (int l=0; l<nsize; ++l) {   // This is the outermost lmn loop
     biggest_arr.ZeroClear();         // Initialize for the search for largest pivot element.
-    for (int m=l; m<NDUSTGAS; ++m) {
+    for (int i=is; i<=ie; ++i) mmax_arr(i) = l;   // default pivot row (no swap) for degenerate columns
+    for (int m=l; m<nsize; ++m) {
 #pragma omp simd
       for (int i=is; i<=ie; ++i) {
         //temp_arr(i) = scale_arr(m, i)*std::abs(lu_matrix(m, l, i));
@@ -78,7 +80,7 @@ void DustGasDrag::LUdecompose(const AthenaArray<Real> &a_matrix,
 //#pragma omp simd
     for (int i=is; i<=ie; ++i) {
       if (l != mmax_arr(i)) {              // Interchange Rows
-        for (int n=0; n<NDUSTGAS; ++n) {
+        for (int n=0; n<nsize; ++n) {
           temp_arr(i)                  = lu_matrix(mmax_arr(i), n, i);
           lu_matrix(mmax_arr(i), n, i) = lu_matrix(l, n, i);
           lu_matrix(l, n, i)           = temp_arr(i);
@@ -93,12 +95,12 @@ void DustGasDrag::LUdecompose(const AthenaArray<Real> &a_matrix,
         lu_matrix(l, l, i) = TINY_NUMBER;
     }
 
-    for (int m=l+1; m<NDUSTGAS; ++m) {         // Divide by the pivot element
+    for (int m=l+1; m<nsize; ++m) {         // Divide by the pivot element
 #pragma omp simd
       for (int i=is; i<=ie; ++i)
         temp_arr(i) = lu_matrix(m, l, i) /= lu_matrix(l, l, i);
 
-      for (int n=l+1; n<NDUSTGAS; ++n) {       // Innermost loop: reduce remaining submatrix.
+      for (int n=l+1; n<nsize; ++n) {       // Innermost loop: reduce remaining submatrix.
 #pragma omp simd
         for (int i=is; i<=ie; ++i)
           lu_matrix(m, n, i) -= temp_arr(i)*lu_matrix(l, n, i);
@@ -110,17 +112,18 @@ void DustGasDrag::LUdecompose(const AthenaArray<Real> &a_matrix,
 
 
 void DustGasDrag::SolveLinearEquation(const AthenaArray<Real> &index_vector,
-    const AthenaArray<Real> &lu_matrix, AthenaArray<Real> &b_vector, AthenaArray<Real> &x_matrix) {
+    const AthenaArray<Real> &lu_matrix, AthenaArray<Real> &b_vector, AthenaArray<Real> &x_matrix,
+    const int nsize) {
 
   int mm = 0;
   int is = pmb_->is, ie = pmb_->ie;
 
-  for (int m=0; m<NDUSTGAS; ++m)
+  for (int m=0; m<nsize; ++m)
 #pragma omp simd
     for (int i=is; i<=ie; ++i)
       x_matrix(m, i) = b_vector(m, i);
 
-  for (int m=0; m<NDUSTGAS; ++m) {       // When mm is set to a positive value,
+  for (int m=0; m<nsize; ++m) {       // When mm is set to a positive value,
 //#pragma omp simd
     for (int i=is; i<=ie; ++i) {
       int mp = index_vector(m, i);       // it will become the index of the first nonvanishing element of b.
@@ -137,12 +140,12 @@ void DustGasDrag::SolveLinearEquation(const AthenaArray<Real> &index_vector,
     }
   }
 
-  for (int m=NDUSTGAS-1; m>=0; m--) { // Now we do the backsubstitution,
+  for (int m=nsize-1; m>=0; m--) { // Now we do the backsubstitution,
 #pragma omp simd
     for (int i=is; i<=ie; ++i)
       sum_arr(i) = x_matrix(m, i);
 
-    for (int n=m+1; n<NDUSTGAS; ++n)
+    for (int n=m+1; n<nsize; ++n)
 #pragma omp simd
       for (int i=is; i<=ie; ++i)
         sum_arr(i) -= lu_matrix(m, n, i)*x_matrix(n, i);
@@ -156,22 +159,23 @@ void DustGasDrag::SolveLinearEquation(const AthenaArray<Real> &index_vector,
 
 
 void DustGasDrag::SolveMultipleLinearEquation(const AthenaArray<Real> &index_vector,
-      const AthenaArray<Real> &lu_matrix, AthenaArray<Real> &b_vector, AthenaArray<Real> &x_matrix) {
+      const AthenaArray<Real> &lu_matrix, AthenaArray<Real> &b_vector, AthenaArray<Real> &x_matrix,
+      const int nsize) {
 
   int is = pmb_->is, ie = pmb_->ie;
 
   xx_arr.ZeroClear();
 
-  for (int n=0; n<NDUSTGAS; ++n) {  // Copy and solve each column in turn.
-    for (int m=0; m<NDUSTGAS; ++m) {
+  for (int n=0; n<nsize; ++n) {  // Copy and solve each column in turn.
+    for (int m=0; m<nsize; ++m) {
 #pragma omp simd
       for (int i=is; i<=ie; ++i)
         xx_arr(m, i) = b_vector(m, n, i);
     }
 
-    SolveLinearEquation(index_vector, lu_matrix, xx_arr, xx_arr);
+    SolveLinearEquation(index_vector, lu_matrix, xx_arr, xx_arr, nsize);
 
-    for (int m=0; m<NDUSTGAS; ++m)
+    for (int m=0; m<nsize; ++m)
 #pragma omp simd
       for (int i=is; i<=ie; ++i)
         x_matrix(m, n, i) = xx_arr(m, i);
@@ -181,13 +185,14 @@ void DustGasDrag::SolveMultipleLinearEquation(const AthenaArray<Real> &index_vec
 
 
 void DustGasDrag::Inverse(const AthenaArray<Real> &index_vector, const AthenaArray<Real> &lu_matrix,
-                  AthenaArray<Real> &a_matrix, AthenaArray<Real> &a_inv_matrix) {
+                  AthenaArray<Real> &a_matrix, AthenaArray<Real> &a_inv_matrix,
+                  const int nsize) {
 
   int is = pmb_->is, ie = pmb_->ie;
 
   //Using the stored LU decomposition, return in ainv the matrix inverse A^-1.
-  for (int m=0; m<NDUSTGAS; ++m) {
-    for (int n=0; n<NDUSTGAS; ++n) {
+  for (int m=0; m<nsize; ++m) {
+    for (int n=0; n<nsize; ++n) {
 #pragma omp simd
       for (int i=is; i<=ie; ++i) {
         a_inv_matrix(m, n, i) = a_matrix(m, n, i);
@@ -195,17 +200,22 @@ void DustGasDrag::Inverse(const AthenaArray<Real> &index_vector, const AthenaArr
     }
   }
 
-  a_matrix.ZeroClear();
-
-  for (int m=0; m<NDUSTGAS; ++m) {
-    for (int n=0; n<NDUSTGAS; ++n) {
+  for (int m=0; m<nsize; ++m) {
+    for (int n=0; n<nsize; ++n) {
 #pragma omp simd
       for (int i=is; i<=ie; ++i) {
-        a_matrix(m, m, i) = 1.0;
+        a_matrix(m, n, i) = 0.0;
       }
     }
   }
 
-  SolveMultipleLinearEquation(index_vector, lu_matrix, a_matrix, a_inv_matrix);
+  for (int m=0; m<nsize; ++m) {
+#pragma omp simd
+    for (int i=is; i<=ie; ++i) {
+      a_matrix(m, m, i) = 1.0;
+    }
+  }
+
+  SolveMultipleLinearEquation(index_vector, lu_matrix, a_matrix, a_inv_matrix, nsize);
   return;
 }

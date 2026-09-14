@@ -23,12 +23,13 @@
 
 // Matrix Addition
 void DustGasDrag::Add(const AthenaArray<Real> &a_matrix, const Real b_num,
-          const AthenaArray<Real> &b_matrix, AthenaArray<Real> &c_matrix) {
+          const AthenaArray<Real> &b_matrix, AthenaArray<Real> &c_matrix,
+          const int nsize) {
 
   int is = pmb_->is, ie = pmb_->ie;
 
-  for(int m=0; m<NDUSTGAS; ++m) {
-    for(int n=0; n<NDUSTGAS; ++n) {
+  for(int m=0; m<nsize; ++m) {
+    for(int n=0; n<nsize; ++n) {
 #pragma omp simd
       for (int i=is; i<=ie; ++i) {
         c_matrix(m, n, i) = a_matrix(m, n, i) + b_num*b_matrix(m, n, i);

@@ -22,6 +22,25 @@
 #include "../dustfluids.hpp"
 #include "dust_gas_drag.hpp"
 
+// (tracer-exempt layout) the drag scratch arrays are sized NDUSTGAS (compile-time)
+// but only rows/cols 0..NDUSTFLUIDS_MOM (gas + real momentum dust fluids) and the
+// active cells is..ie are used; clear only that sub-block instead of the whole buffer.
+static inline void ClearDustScratch1(AthenaArray<Real> &a, const int is, const int ie) {
+#pragma omp simd
+  for (int i=is; i<=ie; ++i) a(i) = 0.0;
+}
+static inline void ClearDustScratch2(AthenaArray<Real> &a, const int is, const int ie) {
+  for (int r=0; r<=NDUSTFLUIDS_MOM; ++r)
+#pragma omp simd
+    for (int i=is; i<=ie; ++i) a(r, i) = 0.0;
+}
+static inline void ClearDustScratch3(AthenaArray<Real> &a, const int is, const int ie) {
+  for (int r=0; r<=NDUSTFLUIDS_MOM; ++r)
+    for (int c=0; c<=NDUSTFLUIDS_MOM; ++c)
+#pragma omp simd
+      for (int i=is; i<=ie; ++i) a(r, c, i) = 0.0;
+}
+
 
 void DustGasDrag::VL2ImplicitFeedback(const int stage,
       const Real dt, const AthenaArray<Real> &stopping_time,
@@ -76,7 +95,7 @@ void DustGasDrag::VL2ImplicitFeedback(const int stage,
           temp_mom3(i) += delta_mom3_src(0, i);
         }
 
-        for (int n=1; n<=NDUSTFLUIDS; ++n) {
+        for (int n=1; n<=NDUSTFLUIDS_MOM; ++n) { // real momentum dust fluids only; tracer fluids (vapor/numdens) are drag-exempt
           int dust_id = n - 1;
           int rho_id  = 4*dust_id;
           int v1_id   = rho_id + 1;
@@ -174,7 +193,7 @@ void DustGasDrag::VL2ImplicitFeedback(const int stage,
           }
         }
 
-        for (int n=1; n<=NDUSTFLUIDS; ++n) {
+        for (int n=1; n<=NDUSTFLUIDS_MOM; ++n) { // real momentum dust fluids only; tracer fluids (vapor/numdens) are drag-exempt
           int dust_id = n - 1;
           int rho_id  = 4*dust_id;
           int v1_id   = rho_id + 1;
@@ -239,29 +258,29 @@ void DustGasDrag::VL2ImplicitFeedback(const int stage,
     Real inv_dt = 1.0/dt;
     for (int k=ks; k<=ke; ++k) {
       for (int j=js; j<=je; ++j) {
-        force_x1_n.ZeroClear();
-        force_x2_n.ZeroClear();
-        force_x3_n.ZeroClear();
+        ClearDustScratch2(force_x1_n, is, ie);
+        ClearDustScratch2(force_x2_n, is, ie);
+        ClearDustScratch2(force_x3_n, is, ie);
 
-        jacobi.ZeroClear();
-        jacobi_n.ZeroClear();
+        ClearDustScratch3(jacobi, is, ie);
+        ClearDustScratch3(jacobi_n, is, ie);
 
-        temp_A.ZeroClear();
-        temp_B.ZeroClear();
-        temp_C.ZeroClear();
+        ClearDustScratch3(temp_A, is, ie);
+        ClearDustScratch3(temp_B, is, ie);
+        ClearDustScratch3(temp_C, is, ie);
 
-        product.ZeroClear();
-        idx_vector.ZeroClear();
-        lu_matrix.ZeroClear();
-        lambda.ZeroClear();
-        lambda_inv.ZeroClear();
+        ClearDustScratch3(product, is, ie);
+        ClearDustScratch2(idx_vector, is, ie);
+        ClearDustScratch2(lu_matrix, is, ie);
+        ClearDustScratch3(lambda, is, ie);
+        ClearDustScratch3(lambda_inv, is, ie);
 
-        delta_mom1.ZeroClear();
-        delta_mom2.ZeroClear();
-        delta_mom3.ZeroClear();
+        ClearDustScratch2(delta_mom1, is, ie);
+        ClearDustScratch2(delta_mom2, is, ie);
+        ClearDustScratch2(delta_mom3, is, ie);
 
-        inv_gas_rho.ZeroClear();
-        inv_gas_rho_n.ZeroClear();
+        ClearDustScratch1(inv_gas_rho, is, ie);
+        ClearDustScratch1(inv_gas_rho_n, is, ie);
 
 #pragma omp simd
         for (int i=is; i<=ie; ++i) {
@@ -279,7 +298,7 @@ void DustGasDrag::VL2ImplicitFeedback(const int stage,
           mom3_w_n(0, i) = gas_rho_n*gas_vel3_n;
         }
 
-        for (int idx=1; idx<=NDUSTFLUIDS; ++idx) {
+        for (int idx=1; idx<=NDUSTFLUIDS_MOM; ++idx) { // real momentum dust fluids only; tracer fluids are drag-exempt
           int dust_id = idx - 1;
           int rho_id  = 4*dust_id;
           int v1_id   = rho_id + 1;
@@ -351,7 +370,7 @@ void DustGasDrag::VL2ImplicitFeedback(const int stage,
         }
 
         // Calculate the jacobi matrix of the drag forces, df/dM|^(n)
-        for (int idx=1; idx<=NDUSTFLUIDS; ++idx) {
+        for (int idx=1; idx<=NDUSTFLUIDS_MOM; ++idx) { // real momentum dust fluids only; tracer fluids are drag-exempt
 #pragma omp simd
           for (int i=is; i<=ie; ++i) {
             jacobi(0, idx, i)   = epsilon(idx, i)*alpha(idx, i);
@@ -369,7 +388,7 @@ void DustGasDrag::VL2ImplicitFeedback(const int stage,
         }
 
         Real half_dt = 0.5*dt;
-        for (int idx=1; idx<=NDUSTFLUIDS; ++idx) {
+        for (int idx=1; idx<=NDUSTFLUIDS_MOM; ++idx) { // real momentum dust fluids only; tracer fluids are drag-exempt
 #pragma omp simd
           for (int i=is; i<=ie; ++i) {
             temp_A(0,   idx, i) =     -half_dt*jacobi(0,   idx, i);
@@ -390,8 +409,8 @@ void DustGasDrag::VL2ImplicitFeedback(const int stage,
 
 
         // Calculate the product matrix, df/dM|^(')*df/dM|^(n)
-        for (int jdx=1; jdx<=NDUSTFLUIDS; ++jdx) {
-          for (int idx=1; idx<=NDUSTFLUIDS; ++idx) {
+        for (int jdx=1; jdx<=NDUSTFLUIDS_MOM; ++jdx) {
+          for (int idx=1; idx<=NDUSTFLUIDS_MOM; ++idx) { // real momentum dust fluids only; tracer fluids are drag-exempt
 #pragma omp simd
             for (int i=is; i<=ie; ++i) {
               product(jdx, idx, i) = jacobi_n(0, idx, i)*jacobi(jdx, 0, i);
@@ -399,22 +418,22 @@ void DustGasDrag::VL2ImplicitFeedback(const int stage,
           }
         }
 
-        for (int idx=1; idx<=NDUSTFLUIDS; ++idx) {
+        for (int idx=1; idx<=NDUSTFLUIDS_MOM; ++idx) { // real momentum dust fluids only; tracer fluids are drag-exempt
 #pragma omp simd
           for (int i=is; i<=ie; ++i) {
             product(idx, idx, i) += jacobi(idx, idx, i)*jacobi_n(idx, idx, i);
           }
         }
 
-        for (int idx=1; idx<=NDUSTFLUIDS; ++idx) {
+        for (int idx=1; idx<=NDUSTFLUIDS_MOM; ++idx) { // real momentum dust fluids only; tracer fluids are drag-exempt
 #pragma omp simd
           for (int i=is; i<=ie; ++i) {
             product(0, idx, i) = jacobi_n(0, idx, i)*jacobi(0, 0, i) + jacobi_n(idx, idx, i)*jacobi(0, idx, i);
           }
         }
 
-        for (int jdx=1; jdx<=NDUSTFLUIDS; ++jdx) {
-          for (int idx=1; idx<=NDUSTFLUIDS; ++idx) {
+        for (int jdx=1; jdx<=NDUSTFLUIDS_MOM; ++jdx) {
+          for (int idx=1; idx<=NDUSTFLUIDS_MOM; ++idx) { // real momentum dust fluids only; tracer fluids are drag-exempt
 #pragma omp simd
             for (int i=is; i<=ie; ++i) {
               product(jdx, 0, i) -= product(jdx, idx, i);
@@ -422,7 +441,7 @@ void DustGasDrag::VL2ImplicitFeedback(const int stage,
           }
         }
 
-        for (int idx=1; idx<=NDUSTFLUIDS; ++idx) {
+        for (int idx=1; idx<=NDUSTFLUIDS_MOM; ++idx) { // real momentum dust fluids only; tracer fluids are drag-exempt
 #pragma omp simd
           for (int i=is; i<=ie; ++i) {
             product(0, 0, i) -= product(0, idx, i);
@@ -430,15 +449,15 @@ void DustGasDrag::VL2ImplicitFeedback(const int stage,
         }
 
         // calculate lambda = temp_B + 0.5*h^2*product
-        Add(temp_B, 0.5*SQR(dt), product, lambda);
+        Add(temp_B, 0.5*SQR(dt), product, lambda, NDUSTFLUIDS_MOM + 1);
 
         // cauculate the inverse matrix of lambda
-        LUdecompose(lambda, idx_vector, lu_matrix);
-        Inverse(idx_vector, lu_matrix, lambda, lambda_inv);
+        LUdecompose(lambda, idx_vector, lu_matrix, NDUSTFLUIDS_MOM + 1);
+        Inverse(idx_vector, lu_matrix, lambda, lambda_inv, NDUSTFLUIDS_MOM + 1);
 
         // calculate temp_C = dt*lambda_inv*temp_A
-        for(int jdx=0; jdx<=NDUSTFLUIDS; ++jdx) {
-          for(int idx=0; idx<=NDUSTFLUIDS; ++idx) {
+        for(int jdx=0; jdx<=NDUSTFLUIDS_MOM; ++jdx) {
+          for(int idx=0; idx<=NDUSTFLUIDS_MOM; ++idx) {
 #pragma omp simd
             for (int i=is; i<=ie; ++i) {
               temp_C(jdx, idx, i) += dt*lambda_inv(jdx, 0, i)*temp_A(0, idx, i);
@@ -446,8 +465,8 @@ void DustGasDrag::VL2ImplicitFeedback(const int stage,
           }
         }
 
-        for(int jdx=0; jdx<=NDUSTFLUIDS; ++jdx) {
-          for(int idx=1; idx<=NDUSTFLUIDS; ++idx) {
+        for(int jdx=0; jdx<=NDUSTFLUIDS_MOM; ++jdx) {
+          for(int idx=1; idx<=NDUSTFLUIDS_MOM; ++idx) {
 #pragma omp simd
             for (int i=is; i<=ie; ++i) {
               temp_C(jdx, 0, i) += dt*lambda_inv(jdx, idx, i)*temp_A(idx, 0, i);
@@ -455,8 +474,8 @@ void DustGasDrag::VL2ImplicitFeedback(const int stage,
           }
         }
 
-        for(int jdx=0; jdx<=NDUSTFLUIDS; ++jdx) {
-          for(int idx=1; idx<=NDUSTFLUIDS; ++idx) {
+        for(int jdx=0; jdx<=NDUSTFLUIDS_MOM; ++jdx) {
+          for(int idx=1; idx<=NDUSTFLUIDS_MOM; ++idx) {
 #pragma omp simd
             for (int i=is; i<=ie; ++i) {
               temp_C(jdx, idx, i) += dt*lambda_inv(jdx, idx, i)*temp_A(idx, idx, i);
@@ -467,9 +486,9 @@ void DustGasDrag::VL2ImplicitFeedback(const int stage,
         //Multiply(lambda_inv, temp_A, temp_C);
         //Multiply(dt, temp_C);
 
-        MultiplyVector(temp_C, force_x1_n, delta_mom1);
-        MultiplyVector(temp_C, force_x2_n, delta_mom2);
-        MultiplyVector(temp_C, force_x3_n, delta_mom3);
+        MultiplyVector(temp_C, force_x1_n, delta_mom1, NDUSTFLUIDS_MOM + 1);
+        MultiplyVector(temp_C, force_x2_n, delta_mom2, NDUSTFLUIDS_MOM + 1);
+        MultiplyVector(temp_C, force_x3_n, delta_mom3, NDUSTFLUIDS_MOM + 1);
 
 #pragma omp simd
         for (int i=is; i<=ie; ++i) {
@@ -518,7 +537,7 @@ void DustGasDrag::VL2ImplicitFeedback(const int stage,
           }
         }
 
-        for (int n=1; n<=NDUSTFLUIDS; ++n) {
+        for (int n=1; n<=NDUSTFLUIDS_MOM; ++n) { // real momentum dust fluids only; tracer fluids (vapor/numdens) are drag-exempt
           int dust_id = n - 1;
           int rho_id  = 4*dust_id;
           int v1_id   = rho_id + 1;
@@ -610,7 +629,7 @@ void DustGasDrag::VL2ImplicitNoFeedback(const int stage,
           mom3_w(0, i) = gas_rho*gas_vel3;
         }
 
-        for (int n=1; n<=NDUSTFLUIDS; ++n) {
+        for (int n=1; n<=NDUSTFLUIDS_MOM; ++n) { // real momentum dust fluids only; tracer fluids (vapor/numdens) are drag-exempt
           int dust_id = n - 1;
           int rho_id  = 4*dust_id;
           int v1_id   = rho_id + 1;
@@ -669,27 +688,27 @@ void DustGasDrag::VL2ImplicitNoFeedback(const int stage,
     Real inv_dt = 1.0/dt;
     for (int k=ks; k<=ke; ++k) {
       for (int j=js; j<=je; ++j) {
-        force_x1_n.ZeroClear();
-        force_x2_n.ZeroClear();
-        force_x3_n.ZeroClear();
+        ClearDustScratch2(force_x1_n, is, ie);
+        ClearDustScratch2(force_x2_n, is, ie);
+        ClearDustScratch2(force_x3_n, is, ie);
 
-        jacobi.ZeroClear();
-        jacobi_n.ZeroClear();
+        ClearDustScratch3(jacobi, is, ie);
+        ClearDustScratch3(jacobi_n, is, ie);
 
-        temp_A.ZeroClear();
-        temp_B.ZeroClear();
-        temp_C.ZeroClear();
+        ClearDustScratch3(temp_A, is, ie);
+        ClearDustScratch3(temp_B, is, ie);
+        ClearDustScratch3(temp_C, is, ie);
 
-        product.ZeroClear();
-        lambda.ZeroClear();
-        lambda_inv.ZeroClear();
+        ClearDustScratch3(product, is, ie);
+        ClearDustScratch3(lambda, is, ie);
+        ClearDustScratch3(lambda_inv, is, ie);
 
-        delta_mom1.ZeroClear();
-        delta_mom2.ZeroClear();
-        delta_mom3.ZeroClear();
+        ClearDustScratch2(delta_mom1, is, ie);
+        ClearDustScratch2(delta_mom2, is, ie);
+        ClearDustScratch2(delta_mom3, is, ie);
 
-        inv_gas_rho.ZeroClear();
-        inv_gas_rho_n.ZeroClear();
+        ClearDustScratch1(inv_gas_rho, is, ie);
+        ClearDustScratch1(inv_gas_rho_n, is, ie);
 #pragma omp simd
         for (int i=is; i<=ie; ++i) {
           const Real &gas_rho = w(IDN, k, j, i);
@@ -710,7 +729,7 @@ void DustGasDrag::VL2ImplicitNoFeedback(const int stage,
         }
 
         Real half_dt = 0.5*dt;
-        for (int idx=1; idx<=NDUSTFLUIDS; ++idx) {
+        for (int idx=1; idx<=NDUSTFLUIDS_MOM; ++idx) { // real momentum dust fluids only; tracer fluids are drag-exempt
           int dust_id = idx - 1;
           int rho_id  = 4*dust_id;
           int v1_id   = rho_id + 1;
@@ -773,15 +792,15 @@ void DustGasDrag::VL2ImplicitNoFeedback(const int stage,
         }
 
         // calculate lambda = temp_B + 0.5*h^2*product
-        Add(temp_B, 0.5*SQR(dt), product, lambda);
+        Add(temp_B, 0.5*SQR(dt), product, lambda, NDUSTFLUIDS_MOM + 1);
 
         // cauculate the inverse matrix of lambda
-        LUdecompose(lambda, idx_vector, lu_matrix);
-        Inverse(idx_vector, lu_matrix, lambda, lambda_inv);
+        LUdecompose(lambda, idx_vector, lu_matrix, NDUSTFLUIDS_MOM + 1);
+        Inverse(idx_vector, lu_matrix, lambda, lambda_inv, NDUSTFLUIDS_MOM + 1);
 
         // calculate temp_C = dt*lambda_inv*temp_A
-        for(int jdx=0; jdx<=NDUSTFLUIDS; ++jdx) {
-          for(int idx=0; idx<=NDUSTFLUIDS; ++idx) {
+        for(int jdx=0; jdx<=NDUSTFLUIDS_MOM; ++jdx) {
+          for(int idx=0; idx<=NDUSTFLUIDS_MOM; ++idx) {
 #pragma omp simd
             for (int i=is; i<=ie; ++i) {
               temp_C(jdx, idx, i) += dt*lambda_inv(jdx, 0, i)*temp_A(0, idx, i);
@@ -789,8 +808,8 @@ void DustGasDrag::VL2ImplicitNoFeedback(const int stage,
           }
         }
 
-        for(int jdx=0; jdx<=NDUSTFLUIDS; ++jdx) {
-          for(int idx=1; idx<=NDUSTFLUIDS; ++idx) {
+        for(int jdx=0; jdx<=NDUSTFLUIDS_MOM; ++jdx) {
+          for(int idx=1; idx<=NDUSTFLUIDS_MOM; ++idx) {
 #pragma omp simd
             for (int i=is; i<=ie; ++i) {
               temp_C(jdx, 0, i) += dt*lambda_inv(jdx, idx, i)*temp_A(idx, 0, i);
@@ -798,8 +817,8 @@ void DustGasDrag::VL2ImplicitNoFeedback(const int stage,
           }
         }
 
-        for(int jdx=0; jdx<=NDUSTFLUIDS; ++jdx) {
-          for(int idx=1; idx<=NDUSTFLUIDS; ++idx) {
+        for(int jdx=0; jdx<=NDUSTFLUIDS_MOM; ++jdx) {
+          for(int idx=1; idx<=NDUSTFLUIDS_MOM; ++idx) {
 #pragma omp simd
             for (int i=is; i<=ie; ++i) {
               temp_C(jdx, idx, i) += dt*lambda_inv(jdx, idx, i)*temp_A(idx, idx, i);
@@ -807,11 +826,11 @@ void DustGasDrag::VL2ImplicitNoFeedback(const int stage,
           }
         }
 
-        MultiplyVector(temp_C, force_x1_n, delta_mom1);
-        MultiplyVector(temp_C, force_x2_n, delta_mom2);
-        MultiplyVector(temp_C, force_x3_n, delta_mom3);
+        MultiplyVector(temp_C, force_x1_n, delta_mom1, NDUSTFLUIDS_MOM + 1);
+        MultiplyVector(temp_C, force_x2_n, delta_mom2, NDUSTFLUIDS_MOM + 1);
+        MultiplyVector(temp_C, force_x3_n, delta_mom3, NDUSTFLUIDS_MOM + 1);
 
-        for (int n=1; n<=NDUSTFLUIDS; ++n) {
+        for (int n=1; n<=NDUSTFLUIDS_MOM; ++n) { // real momentum dust fluids only; tracer fluids (vapor/numdens) are drag-exempt
           int dust_id = n - 1;
           int rho_id  = 4*dust_id;
           int v1_id   = rho_id + 1;

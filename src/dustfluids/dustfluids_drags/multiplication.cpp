@@ -42,12 +42,13 @@ void DustGasDrag::Multiply(const AthenaArray<Real> &a_matrix,
 
 
 void DustGasDrag::MultiplyVector(const AthenaArray<Real> &a_matrix,
-                      const AthenaArray<Real> &b_vector, AthenaArray<Real> &c_vector) {
+                      const AthenaArray<Real> &b_vector, AthenaArray<Real> &c_vector,
+                      const int nsize) {
 
   int is = pmb_->is, ie = pmb_->ie;
 
-  for(int m=0; m<NDUSTGAS; ++m) {
-    for(int n=0; n<NDUSTGAS; ++n) {
+  for(int m=0; m<nsize; ++m) {
+    for(int n=0; n<nsize; ++n) {
 #pragma omp simd
       for (int i=is; i<=ie; ++i) {
         c_vector(n, i) += a_matrix(m, n, i)*b_vector(m, i);

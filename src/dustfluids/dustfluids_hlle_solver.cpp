@@ -42,7 +42,9 @@ void DustFluids::HLLERiemannSolverDustFluids(const int k, const int j, const int
   Real df_w_li[(NDUSTVARS)], df_w_ri[(NDUSTVARS)], df_w_roe[(NDUSTVARS)];
   Real df_fl[(NDUSTVARS)], df_fr[(NDUSTVARS)], df_flxi[(NDUSTVARS)];
 
-  for (int n=0; n<NDUSTFLUIDS; ++n) {
+  // [26.09.06]Zhixuan: Riemann solve only for momentum (real dust) fluids; tracer fluids
+  // (vapor, number densities) are advected by their carriers below.
+  for (int n=0; n<NDUSTFLUIDS_MOM; ++n) {
     int idust = n;
     int irho  = 4*idust;
 
@@ -136,7 +138,9 @@ void DustFluids::HLLENoCsRiemannSolverDustFluids(const int k, const int j, const
   Real df_w_li[(NDUSTVARS)], df_w_ri[(NDUSTVARS)], df_w_roe[(NDUSTVARS)];
   Real df_fl[(NDUSTVARS)], df_fr[(NDUSTVARS)], df_flxi[(NDUSTVARS)];
 
-  for (int n=0; n<NDUSTFLUIDS; ++n) {
+  // Riemann solve only for momentum (real dust) fluids; tracer fluids
+  // (vapor, number densities) are advected by their carriers below.
+  for (int n=0; n<N_P*N_Z; ++n) {
     int idust = n;
     int irho  = 4*idust;
 

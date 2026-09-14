@@ -125,8 +125,10 @@ class DustFluids {
       AthenaArray<Real> &prim_df_r, AthenaArray<Real> &dust_flux);
 
     // tracer flux solver. (Yu, 2025-11-18)
+   // [26.09.06]Zhixuan: we need prim_df b/c we need also to copy the velocity
   void TracerUpwindFlux(const int k, const int j, const int il,
-                                       const int iu, // CoordinateDirection dir,
+                                       const int iu, const int dir,
+                                       const AthenaArray<Real> &prim_df,
                                        AthenaArray<Real> &r_l, AthenaArray<Real> &r_r, // 2D
                                        AthenaArray<Real> &mass_flx,  // 3D
                                        AthenaArray<Real> &flx_out);

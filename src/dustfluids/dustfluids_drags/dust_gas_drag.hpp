@@ -44,7 +44,8 @@ class DustGasDrag {
 
   // Matrix Addition
   void Add(const AthenaArray<Real> &a_matrix, const Real b_num,
-           const AthenaArray<Real> &b_matrix, AthenaArray<Real> &c_matrix);
+           const AthenaArray<Real> &b_matrix, AthenaArray<Real> &c_matrix,
+           const int nsize = NDUSTGAS);
 
   void Add(AthenaArray<Real> &a_matrix, const Real b_num, const AthenaArray<Real> &b_matrix);
 
@@ -58,7 +59,8 @@ class DustGasDrag {
                 const AthenaArray<Real> &b_matrix, AthenaArray<Real> &c_matrix);
 
   void MultiplyVector(const AthenaArray<Real> &a_matrix,
-                      const AthenaArray<Real> &b_vector, AthenaArray<Real> &c_vector);
+                      const AthenaArray<Real> &b_vector, AthenaArray<Real> &c_vector,
+                      const int nsize = NDUSTGAS);
 
   void Multiply(const Real a_num, const AthenaArray<Real> &b_matrix, AthenaArray<Real> &c_matrix);
 
@@ -66,18 +68,21 @@ class DustGasDrag {
 
   // Matrix Inverse
   void LUdecompose(const AthenaArray<Real> &a_matrix, AthenaArray<Real> &index_vector,
-                    AthenaArray<Real> &lu_matrix);
+                    AthenaArray<Real> &lu_matrix, const int nsize = NDUSTGAS);
 
   // Solve A*x = b
   void SolveLinearEquation(const AthenaArray<Real> &index_vector, const AthenaArray<Real> &lu_matrix,
-                                 AthenaArray<Real> &b_matrix, AthenaArray<Real> &x_matrix);
+                                 AthenaArray<Real> &b_matrix, AthenaArray<Real> &x_matrix,
+                                 const int nsize = NDUSTGAS);
 
   void SolveMultipleLinearEquation(const AthenaArray<Real> &index_vector,
-      const AthenaArray<Real> &lu_matrix, AthenaArray<Real> &b_matrix, AthenaArray<Real> &x_matrix);
+      const AthenaArray<Real> &lu_matrix, AthenaArray<Real> &b_matrix, AthenaArray<Real> &x_matrix,
+      const int nsize = NDUSTGAS);
 
   // Calculate the inverse of matrix
   void Inverse(const AthenaArray<Real> &index_vector, const AthenaArray<Real> &lu_matrix,
-                  AthenaArray<Real> &a_matrix, AthenaArray<Real> &a_inv_matrix);
+                  AthenaArray<Real> &a_matrix, AthenaArray<Real> &a_inv_matrix,
+                  const int nsize = NDUSTGAS);
 
   // Time Integrators
   // Explitcit Integartors, these are consistent with default integrators in athena++
