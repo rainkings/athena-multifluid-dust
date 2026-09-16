@@ -1,158 +1,95 @@
-# 在 TH-eX（天河）上跑本 Athena++ 分支 — 配置与作业手册
+# 在 TH-eX 上跑 Athena++（本分支）
 
-> 集群侧事实来源：用户手册《TH-eX 系统用户手册（2026-04）》，本仓库 `../TH-eX用户登陆手册-全文.layout.txt`（同目录另一份在 `~/Documents/tianhe/`）。
-> 本仓库事实：Athena++ 多流体尘埃分支，problem = `disk_snowline_2D_RT_erg_2_twopop`，本地构建为 **MPI OFF / OpenMP ON**、HDF5 指向 `/home/izx/bin/hdf5`。
+账号 `saturn_lizx`；登录节点别名 `th0`（192.168.10.50）、`th1`（.51），`~/.ssh/config` 已配好。
 
----
-
-## 0. 一句话回答两个问题
-
-**代码放哪**：放 **`$HOME/athena`**（即 `/fs2/home/saturn_lizx/athena`）。
-理由：登录节点的家目录本身就在 **Lustre `/fs2`** 上（手册 P15–18；附录 D 里 VS Code 远程默认打开 `/fs2/home/<用户名>`），**所有登录节点与计算节点都挂载 `/fs2`**，而计算节点**看不到**登录节点的其他目录（手册 P3）。所以代码、二进制、输入、输出**全部必须在 `/fs2` 下**——放 `/tmp` 或节点本地盘＝作业里看不见。
-
-**怎么配置**：在**登录节点**上装模块 → `configure.py -mpi -omp -hdf5 ...` → `make`（**计算节点没有编译器**，手册 P2），然后用 `yhbatch` 提交、脚本内用 `yhrun` 拉起。全套命令见 §2–§4，脚本已备好：`login-recon.sh`、`configure_th-ex.sh`、`sub.sh`、`rsync-to-th.sh`。
-
----
-
-## 1. 目录布局（建议）
+## 1. 放哪里
 
 ```
-/fs2/home/saturn_lizx/
-├── athena/                     # 代码树（本仓库镜像）→ 编译产物 bin/athena、obj/ 都在这里
-│   ├── bin/athena              # 只在该集群上编译出来的可执行文件
-│   ├── inputs/snowline/athinput.iceline
-│   └── cluster/                # 本工具包
-└── runs/                       # 每个算例一个目录：输入副本 + HDF5 输出 + 日志
-    └── iceline_20260914_1730/
+/fs2/home/saturn_lizx/athena/                 代码 + bin/athena（编好的二进制）
+/fs2/home/saturn_lizx/athena_works/<case>/    算例目录（自己建）：athinput.iceline + 输出
 ```
 
-- **为什么把 runs/ 放在代码树外**：HDF5 输出会迅速吃掉配额，而代码树经常 `make clean`/重编；分开后重编不影响数据，清理数据也不会误伤代码。
-- **配额**：登录时会打印磁盘配额表（手册表 2-1：Kbytes/Quota/Limit/Grace + 文件数）。先 `quota -s` / `lfs quota -h -u $USER /fs2` 看清上限再决定输出频率（`<output>.dt`）和保留几个 `rst`。
-- **备份**：Lustre **不提供多副本保护**，手册明确要求自行备份重要数据与结果（P3）。干净的做法：算完一个阶段就 `rsync` 回本地（`rsync -avP th0:runs/iceline_xxx/ ./backup/`）。
-- 手册没有文档化"独立 scratch 分区"——**不要假设有**；需要更大空间就联系 `support@nscc-tj.cn`（硬件）/`service@nscc-tj.cn`（软件）。
+`/fs2` 是登录节点和所有计算节点**共同挂载**的共享存储（家目录就在其上）。放别处（`/tmp`、节点本地盘）作业里看不见。
+输出直接落在算例目录，命名与本地一致：`iceline.NNNNN.rst`、`iceline.out1/out2.NNNNN.athdf(+.xdmf)`、`iceline.hst`。
+配额用 `quota -s` / `df -h ~` 看（Lustre 无多副本，重要数据及时拉回本机）。
 
-## 2. 传输（本地 → 集群）
-
-你的 `~/.ssh/config` 里已经有别名了（`th0` = 192.168.10.50、`th1` = .51，User `saturn_lizx`），且 **VPN 必须在线**（当前 `utun7` 隧道在、`192.168.10.50:22` 可达）。
-
-```bash
-cd /home/lzx/mnt/callisto-athena-multifluid-dust
-bash cluster/rsync-to-th.sh --dry-run   # 先看会传什么
-bash cluster/rsync-to-th.sh             # 真传（会提示输入集群密码）
-```
-
-**不要传 `obj/` 与 `bin/`**：本地 `bin/athena` 动态链的是 `/home/izx/bin/hdf5/lib/libhdf5.so.320`，在集群上必然是 `not found`（已实测 `ldd`）。传过去也只会在集群上重新 `make`。源码树排除构建产物后只有 **16 MB**（含 `.git` 是 62 MB，`.git` 默认排除）。
-
-## 3. 在登录节点上配置与编译
-
-> 只在登录节点编译（计算节点无编译环境）。先在集群上跑一次侦察脚本，把模块名/HDF5 前缀/分区权限钉死：
+## 2. 编译（登录节点，通常只需一次）
 
 ```bash
 ssh th0
-mkdir -p ~/athena && exit          # 仅首次建目录
-# 本地：bash cluster/rsync-to-th.sh
+cd ~/athena
+MPI=1 bash cluster/zx_config_th-ex.sh     # = 你的 zx_config + MPI（推荐上集群）
+bash cluster/zx_config_th-ex.sh           # 不加 MPI=1 就是 OpenMP 版（配 RUN_MODE=omp 用）
+```
+
+模块组合已内置并实测通过：`GCC/14.3.0` + `MPI/mpich/4.0.2-mpi-x-gcc14.3` + `hdf5/1.14.5-gcc14.3-mpi-x`。
+
+## 3. 跑（在算例目录里执行，就用你自己的 athena_run.sh）
+
+```bash
 ssh th0
-cd ~/athena && bash cluster/login-recon.sh        # 输出贴回来，我据此定稿模块名
+mkdir -p ~/athena_works/mycas && cd ~/athena_works/mycas
+# 把 athinput.iceline 放进来（自己写/从别处拷），然后：
+
+~/athena/cluster/athena_run.sh nohup          # 从头算：提交作业（默认 debug6 / 1 节点 / 56 核 / 30 分钟）
+~/athena/cluster/athena_run.sh nohup 744      # 从 iceline.00744.rst 续算
+~/athena/cluster/athena_run.sh gdb            # 交互调试（集群上先自动申请 1 核）
+~/athena/cluster/athena_run.sh gdb 744        # 从 iceline.00744.rst 起，gdb 调试
+
+PARTITION=cp6 TIME=24:00:00 ~/athena/cluster/athena_run.sh nohup     # 换正式分区/长时限
+NTHREADS=56                 ~/athena/cluster/athena_run.sh nohup     # 线程数（默认模式 omp：1 进程 × 56 线程）
+RUN_MODE=mpi                ~/athena/cluster/athena_run.sh nohup     # 换成多进程 56 rank（需要 MPI 版二进制）
+~/athena/cluster/athena_run.sh check                                 # 问一句：这份二进制是哪个版本
+
+yhq                                  # 看状态
+yhcontrol show jobs <jobid>          # 看明细
+yhcancel <jobid>                     # 取消
 ```
 
-拿到 HDF5 模块名后：
+日志在算例目录：`slurm-<case>.<jobid>.out` 与 `athena.<jobid>.log`。
+按你原来的习惯（把 `athena_run.sh` 拷进算例目录、`./athena_run.sh nohup`）也完全一样。
+在没有 Slurm 的机器上（例如 Callisto）本脚本自动退回你原来的 `nohup` / `gdb` 行为，同一个脚本两处通用。
+
+## 4. 拉数据回本机
 
 ```bash
-cd ~/athena
-# 手册推荐（P6）：Intel 编译器 + 基于 Intel 的 MPI，性能最好
-export HDF5_MODULE=hdf5/<版本>        # 由 login-recon.sh 得到，例如 hdf5/1.12.1
-bash cluster/configure_th-ex.sh       # 默认 Intel_compiler/19.0.4 + MPI/mpich/4.0.2-mpi-x-icc19.0
+cd ~/Science/hydro/athena_works/hydro_scripts
+./sync_data_th-ex.sh latest <case>     # 或 ./sync_data_th-ex.sh 744 <case>
 ```
 
-等价的手工命令（脚本就是干这个）：
+## 5. 四条硬约束（都踩过）
 
-```bash
-module purge
-module add Intel_compiler/19.0.4
-module add MPI/mpich/4.0.2-mpi-x-icc19.0
-module add "$HDF5_MODULE"
-python3 configure.py \
-  --prob=disk_snowline_2D_RT_erg_2_twopop \
-  --ndustfluids=4 --np=1 --nz=2 \
-  --flux=hllc --coord=spherical_polar --eos=general/eos_phase_change --nghost=2 \
-  -mpi -omp -hdf5 --hdf5_path="$HDF5_PREFIX" -h5double \
-  --cxx=icpc --mpiccmd=mpicxx
-make clean && make -j 8
-```
+1. **核数要对齐三处**：Slurm `-n`（rank 数）× 每 rank 线程数 = 实际占用核数，且不超过请求量。
+   Athena++ **只认输入文件 `[mesh] num_threads`**（`src/mesh/mesh.cpp:118`），**不看 `OMP_NUM_THREADS`**。
+   `athena_run.sh` 用命令行覆盖 `mesh/num_threads=<N>`（Athena++ 支持 `athena [options] [block/par=value ...]`）——
+   **不要手改 athinput 里的 num_threads**，否则同一份输入在两台机器上必然有一边是错的。
+   默认 `RUN_MODE=omp` = **1 进程 × 32 线程**（`yhrun -n 1 -c 32`，申请量自动对齐到 32 个核）；
+   `-n` 是进程数、`-c` 才是每进程核数，写成 `-n 56` 会变成 56 个独立进程互写同一批输出
+   （日志里 "entering main loop" 会出现多次）。线程数上限是 block 数（64），超了 Athena++ 直接 FATAL
+   （`src/mesh/amr_loadbalance.cpp:132`）。
+   **实测（EPR_SF，两次 30 分钟）：32 线程略快于 56 线程。** 你这类算例只有 64 blocks × 80~120 单元、
+   数据全在 cache 里 → 瓶颈是 OpenMP 同步/动态调度开销而不是算力，线程越多同步越贵；所以默认 32，
+   同时机时省一半。想复现 56 档：`NTHREADS=56 ... nohup`。
+2. **rank 数不能超过 meshblock 数**（`src/mesh/mesh.cpp:499`，超了直接 fatal）。你这套算例是 64 blocks
+   （`160×32/48` + meshblock `10×8/10×12`）→ 单作业最多 64 rank；**单节点 56 rank 最合适**，跨节点通常更慢。
+   要更多核必须先做大问题（缩小 meshblock 会增加 ghost 开销 2.10× → 2.70×）；真正有效的并行是**多个算例各占一个节点**。
+3. **HDF5 模块必须与 MPI 同套**：后缀 `-mpi-x`/`-mpi-n` = 站点 mpich；带 `-openmpi` 后缀的会把它自己那套编译器 + MPI
+   拉进来造成冲突。另：`module av` 在本集群会**卡死**（用 `module -t avail <pattern>`）；`icpc` 编不过
+   `src/eos/general/general_hydro.cpp` 的 `#pragma omp simd` + `ATHENA_ERROR`（GCC 无此问题）；本地 HDF5 是 2.0.0、
+   集群 1.14.5，代码无 2.0 专属 API，跨版本编译与读文件都无碍。
+4. **HDF5 文件锁在 `/fs2` 上会失败**：HDF5 ≥1.10.7 默认给打开的文件加 `flock`，Lustre 常不支持 →
+   `H5FD__sec2_lock(): unable to lock file, errno = 11 (Resource temporarily unavailable)` →
+   `### FATAL ERROR in athdf5 initialization / Could not open iceline.out1.00000.athdf`（初始化即死，与算到哪无关）。
+   修法：`export HDF5_USE_FILE_LOCKING=FALSE`（可加 `HDF5_IGNORE_DISABLED_FILE_LOCK=TRUE`）——
+   `athena_run.sh` 三条路径（作业内 / 退回 nohup / 退回 gdb）都已自动设置。
+   注意：串行（MPI OFF）构建走 HDF5 的 sec2 驱动才会碰到这个锁；MPI 版走 parallel HDF5(MPI-IO)，一般不涉及。
+   另外确保**同一个算例目录只有一个作业在写**（两个作业同目录会互相锁/覆盖）。
 
-要点（对照你本地的 `zx_config.sh`）：
+## 6. 文件（`cluster/` 共 4 个）
 
-| 项 | 本地（`zx_config.sh` / 现 `Makefile`） | 集群（本工具包） | 为什么 |
-|---|---|---|---|
-| MPI | **OFF** | **`-mpi`** | 不编 MPI 就只能单进程跑，`yhrun -n 56` 白给 |
-| HDF5 路径 | `/home/izx/bin/hdf5` | 集群 `hdf5` 模块 | 那是别人家目录，集群上不存在 |
-| 编译器 | `--cxx=g++`（MESA SDK 的 g++） | `--cxx=icpc` + `--mpiccmd=mpicxx` | 手册 P6：计算节点是 Intel 芯片，推荐 Intel 编译器 + Intel 后端 MPI（`mpich/4.0.2-mpi-x-icc19.0`） |
-| 优化 | `-O3 -std=c++11 -fopenmp -g -O0`（**实际是 -O0，慢**） | 默认 `-O3` 一套 Flags | 本地那串里 `-O0` 在最后，会覆盖 `-O3` |
-| 并行 | `num_threads = 64`（本机只有 **2** 核） | 纯 MPI 时 `num_threads = 1`；混合并行时每 rank 的线程数 ≤ 核数/rank | 64 线程在 2 核上是超额订阅；集群节点 56 核（6348）/36 核（6354） |
-
-**GCC 路线**（如果 Intel 19.0.4 编不过你的自定义代码，或你想与本地一致）：
-
-```bash
-TOOLCHAIN=gcc bash cluster/configure_th-ex.sh
-# = GCC/8.5.0 + MPI/mpich/4.0.2-mpi-x-gcc8.5 + --cxx=g++ --mpiccmd=mpicxx
-```
-
-**要不要两套构建树**：`configure.py` 会就地重写 `Makefile` 与 `src/defs.hpp`，所以"生产 MPI 版"和"调试版"不能在同一个树里共存——需要时 `cp -a athena athena-debug` 各编一套。
-
-## 4. 提交作业
-
-本算例网格 `160×48`、meshblock `10×12` → **64 个 block**；单节点 56 核基本吃满（多出的 rank 会空转，`-n` 超过 64 没有收益）。
-
-```bash
-cd ~/athena
-yhbatch sub.sh                       # 用 cluster/sub.sh 模板（先复制到 ~/athena/sub.sh 或直接用路径）
-```
-
-`cluster/sub.sh` 关键行（**先按你的账号权限改分区**）：
-
-```bash
-#SBATCH -p debug6        # 调试分区（≤2 节点/112 核）；正式算例换成你有权限的分区
-#SBATCH -N 1
-#SBATCH -n 56            # ← 必须与脚本里 yhrun -n 的值一致
-yhrun -n 56 ./bin/athena -i runs/iceline_xxx/athinput.iceline -d runs/iceline_xxx
-```
-
-手册要点（P20–23、附录 E）：
-- **`yhbatch` 申请的资源应不小于脚本内 `yhrun` 申请的资源**；
-- 交互式 `yhrun` 不重定向 I/O 时，关终端会**杀掉任务** → 正式跑一律走 `yhbatch`（终端关闭不影响）；
-- 脚本里建议显式 `-o/-e`，作业默认输出是 `slurm-<jobid>.out`；
-- 分区与队列：`debug4/5/6`（调试，≤2 节点/112 核）、`cp*/cps*/short*/long*`（包机时/包规模，节点数核数**由账号权限决定**）、`cp6bm`（大内存 1TB）、`x11`（可视化）；
-- **抢占式调度**：作业哪怕只占 1 个核，该节点也不会再分给别人 → 申请核数与实际用量要匹配，否则浪费的是你自己（也容易被管理员盯）。
-- 登录节点上**禁止跑计算程序**（会被杀、可封号）——只能编辑/编译/提交/传数据。
-
-监控与操作：
-
-```bash
-yhi -l                 # 节点/分区状态（手册 3.1.1）
-yhq                    # 只能看到自己的作业（3.1.2）
-yhcontrol show jobs <jobid>   # 作业明细（3.1.3）
-yhcancel <jobid>       # 取消（3.1.4）
-```
-
-> 若 `yhi`/`yhq` 不可用，试 `sinfo -o "%20P %5a %10l %6D %t %N"` 与 `squeue -u $USER`（同一套调度系统的原生命令）。
-
-## 5. 首轮验证（别一上来就跑生产）
-
-1. **短时限冒烟**：`-t 00:10:00`、1 节点 56 核、把 `<time> nlim = 200`（或用 `-t` 限制），确认能在集群上正常启动、写 HDF5、正常退出。
-2. **正确性对齐**：同样的 `athinput` + 更小的 `nlim`，与本地 OpenMP 串行结果对比（`hst` 文件里同一时刻的守恒量/极值；或 `python3 -c "import h5py..."` 比 `prim` 的 max/mean）。MPI 版本在域分解、tracer 行（你的 `CHANGELOG_LZX.md` 改的那部分）上最值得核对。
-3. **再看性能**：`ncycle_out` 让 stdout 每 5000 步打印一次，从 `.out` 里看 `zone-cycles/cpu_second`，比较 `-n 28/56` 的加速比；`OMP_NUM_THREADS=1` 与 `-n 28 -c 2` 两种布局各测一次。
-
-## 6. 已知坑（本地 vs 集群）
-
-- **本地那个 `bin/athena` 在集群上不可用**（链的是 `/home/izx/bin/hdf5`）。
-- **本地 git 报 "dubious ownership"**（目录属主是 uid 1005，你是 lzx）→ `git`/`git status` 在本仓库静默失败。修：`git config --global --add safe.directory /home/lzx/mnt/callisto-athena-multifluid-dust`（一条本地配置，可撤销）。
-- **本仓库没有 git remote**（`git remote -v` 为空）→ 集群侧不能 `git clone`，只能 rsync；建议给仓库加个 remote（GitHub/GitLab）以便日后增量同步。
-- VPN 掉线会让 ssh 卡住：手册建议 `~/.ssh/config` 加 `ServerAliveInterval 90 / ServerAliveCountMax 3 / TCPKeepAlive no`。
-- 密码：首次 ssh 登录会强制改密；规则 ≥12 位且 ≥3 类字符；**90 天强制更换**；连错 5 次锁 10 分钟（手册 2.2.2）。
-- HDF5 双精度（`-h5double`）与 `-hdf5` 都要带，否则输出类型和本地不一致，后处理脚本会踩坑。
-
-## 7. 还需要确认的三件事（我无法从本地判定）
-
-1. **你的账号有权限哪些分区**、配额多少 → `login-recon.sh` 的 `yhi`/`quota` 输出（或问 `service@nscc-tj.cn`）。
-2. **HDF5 模块的确切名字与前缀** → `login-recon.sh` 的 `module av | grep hdf5`。
-3. **首轮规模**：建议 `debug6` 1 节点 56 核跑冒烟；生产算例规模（节点数/核数/时限）按你的机时额度定。
+| 文件 | 作用 |
+|---|---|
+| `athena_run.sh` | 你的运行脚本的集群版：`(无参数)`/`gdb [num]`/`nohup [num]`/`check`；**默认 `RUN_MODE=omp`（1 进程 × 32 线程）**，集群上自动走 yhbatch/yhrun，无 Slurm 时退回本地行为 |
+| `zx_config_th-ex.sh` | 编译（你的 `zx_config.sh` + 集群模块；`MPI=1` 开 MPI） |
+| `rsync-to-th.sh` | 从 Callisto 经本机把代码树同步到集群（排除 `obj/ bin/ .git/`） |
+| `README-th-ex.md` | 本文件 |

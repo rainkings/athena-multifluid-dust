@@ -247,7 +247,9 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
 
         Real T = Get_T_rhoe(rhoe, rho_g, rho_d_array, rho_v/rho_g);
 
+        // used for output
         P_eq_array(k,j,i) = Get_P_eq(T, T_a);
+
         fx0 = drho;
         x0 = rho_v;
         

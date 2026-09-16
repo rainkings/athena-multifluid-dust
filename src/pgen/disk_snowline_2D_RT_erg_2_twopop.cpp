@@ -919,11 +919,15 @@ void Mesh::UserWorkInLoop() {
                 q_int_f(tk,tj+1,ti) = q_z(tk,tj,ti)*dx2 + q_int_f(tk,tj,ti);
                 q_int(tk,tj,ti) = 0.5*(q_int_f(tk,tj+1,ti) + q_int_f(tk,tj,ti));
 
-                if (std::isnan(q_z(tk,tj,ti))){
+                if (ti ==42 && tj ==48){
+                  std::cout << "======================================" << std::endl;
+                  std::cout <<"tj, ti = " << tj <<','<<ti<< std::endl;
+                  std::cout << "q_z = " << q_z(tk,tj,ti) << std::endl;
                   std::cout << "q_irr = " << q_irr << std::endl;
                   std::cout << "q_vis = " << q_vis << std::endl;
                   std::cout << "q_latent = " << pmb->pphase_change->q_latent(k,j,i) << std::endl;
                   std::cout << "q_diff = " << q_diff(tk,tj,ti) << std::endl;
+                  std::cout <<"check" << std::endl;
                 }
                 // Simpson's 1/3 rule:
                 // q_int(tk,tj,ti) = q_int(tk,tj-2,ti) +  dx2/3.0*(q_z(tk,tj-2,ti) + 4.0*q_z(tk,tj-1,ti) + q_z(tk,tj,ti));
@@ -966,6 +970,14 @@ void Mesh::UserWorkInLoop() {
                 // linear interpolation
                 tau_eff_f(tk,tj+1,ti) = rhokappa(tk,tj,ti)*(1.0 - q_int(tk,tj,ti)/F_inf) * dx2 + tau_eff_f(tk,tj,ti);
                 tau_eff(tk,tj,ti) = 0.5*(tau_eff_f(tk,tj+1,ti) + tau_eff_f(tk,tj,ti));
+                if (ti ==42 && tj ==48){
+                  std::cout << "tau_eff < 0, tk,tj,ti = " << tk <<','<<tj<<','<<ti<< std::endl;
+                  std::cout << "tau_eff_f(tk,tj+1,ti) = " << tau_eff_f(tk,tj+1,ti) << std::endl;
+                  std::cout << "tau_eff_f(tk,tj,ti) = " << tau_eff_f(tk,tj,ti) << std::endl;
+                  std::cout << "rhokappa = " << rhokappa(tk,tj,ti) << std::endl;
+                  std::cout << "q_int = " << q_int(tk,tj,ti) << std::endl;
+                  std::cout << "F_inf = " << F_inf << std::endl;
+                }
                 // Simpson's 1/3 rule:
                 // tau_eff(tk,tj,ti) = tau_eff(tk,tj-2,ti) + dx2/3.0*(rhokappa(tk,tj-2,ti)*(1.0 - q_int(tk,tj-2,ti)/F_inf) + 4.0*rhokappa(tk,tj-1,ti)*(1.0 - q_int(tk,tj-1,ti)/F_inf) + rhokappa(tk,tj,ti)*(1.0 - q_int(tk,tj,ti)/F_inf));
                 // Trapezoidal rule:
@@ -2620,18 +2632,18 @@ void DiskInnerX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim,
               Real &vapor_vel3_ghost = prim_df(v3_id,  k, j, il-i);
               
               // keep the consistency between gas and vapor.
-              Real fv_act2 = prim_df(4*(vapor_id), k, j, il+1)/prim(IDN, k, j, il+1);
-              Real fv_ghost = 2.0*fv - fv_act2;          // linear extrapolation of the concentration
-              if (fv_ghost < 0.0) {
-                fv_ghost = 0.0;
-              } else if (fv_ghost > 1.0) {
-                fv_ghost = 1.0;
-              }
+              // Real fv_act2 = prim_df(4*(vapor_id), k, j, il+1)/prim(IDN, k, j, il+1);
+              // Real fv_ghost = 2.0*fv - fv_act2;          // linear extrapolation of the concentration
+              // if (fv_ghost < 0.0) {
+              //   fv_ghost = 0.0;
+              // } else if (fv_ghost > 1.0) {
+              //   fv_ghost = 1.0;
+              // }
               
               vapor_vel1_ghost = gas_vel1_ghost;
               vapor_vel2_ghost = gas_vel2_ghost;
               vapor_vel3_ghost = gas_vel3_ghost;
-              vapor_rho_ghost = fv_ghost*gas_rho_ghost;
+              vapor_rho_ghost = fv*gas_rho_ghost;
               if (std::isnan(vapor_rho_ghost) or vapor_rho_ghost < 0.0){
                 std::cout << "vapor_rho_ghost = nan in DiskInnerX1" << std::endl;
                 quick_exit(1);
