@@ -38,3 +38,20 @@ In the current 1p-2z configuration: `NDUSTFLUIDS = 4` = `N_P*N_Z = 2` real (mome
 ## Notes
 
 - Physical behaviour of the real dust fluids is unchanged; vapor and number-density *density/concentration* fields are unaffected (their advection is carrier-exact by construction); their velocity/momentum rows are passive bookkeeping and are not used in analysis.
+
+---
+
+## Addendum 2026-09-18 — floor-gated dust speed ceiling in the CFL constraint
+
+**Problem.** A single cell whose dust density has been driven onto the dust floor (`dffloor`) can hold a `|v| = |mom|/dffloor` spike that is numerically meaningless (the momentum row is not rescaled when the EOS floors the conserved density, `src/eos/eos_dustfluids.cpp:106`). That spike contains no mass, yet it limited `dt` globally: `NewAdvectionDt` reported `d(2) x2 (3, 26, 0)` with `dt ~ 8e-3` while the cell held ~1e-15 of dust.
+
+**Change (timestep determination only).** The primitive and conserved dust states are **not** modified anywhere:
+
+- `src/dustfluids/dustfluids.hpp` — two new members, `vel_ceiling_factor_` and `dffloor_`.
+- `src/dustfluids/dustfluids.cpp` — constructor reads `dust/st_vel_ceiling` (default `3.0`) and `dust/dffloor` (default `sqrt(1024*float_min)`, same expression the EOS uses).
+- `src/dustfluids/new_blockdt_dustfluids.cpp` — in `NewAdvectionDt`, the denominators of `dt = dx/|v|` use `min(|v|, vel_ceiling_factor_*cs_gas)`, with `cs_gas` recovered from the gas primitive state as `sqrt(p/rho)` (no gamma/mu; valid for `general/phase_change`). The ceiling is engaged **only** in cells with `rho_d <= dffloor`; above the floor the raw velocity is used unchanged. A diagnostic printout reports how many `(cell, direction)` pairs were capped, with the capped minimum `dt` and its location.
+
+**Properties.** `min(|v|, v_ceil) <= |v|`, so `dt` can only become *larger*: no new CFL/stability constraint is introduced and the pre-existing `dt <= 1e-3` bail-out cannot be triggered by the ceiling. The cap is one-way safe, and it is the only behaviour that changes — the min-dt bookkeeping, `dt_hyperbolic *= cfl_number`, `Mesh::NewTimeStep()`, and all `df_u`/`df_w` values are untouched.
+
+**Input switch.** `<dust> st_vel_ceiling = 3.0` (units of the local gas sound speed; set `<= 0` to disable the ceiling and its diagnostic).
+

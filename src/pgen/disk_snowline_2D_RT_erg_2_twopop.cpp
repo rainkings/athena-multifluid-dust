@@ -350,7 +350,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
 
   // global optical depth
   if(true){
-    AllocateRealUserMeshDataField(9);
+    AllocateRealUserMeshDataField(11);
     // 0:tau_vi, 1:tau_eff, 2:q_z, 3:q_int, 4:Tem_RT, 5:int_1, 6:int_2, 7:rho_z, 8:q_diff
     ruser_mesh_data[0].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
     ruser_mesh_data[1].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
@@ -848,7 +848,7 @@ void Mesh::UserWorkInLoop() {
       }
     }
   
-    // do some iteration here:
+    // do some iteration here, not now [26.10.13]:
     int N_iter = 0;
     int N_iter_max = 1;
 
@@ -908,6 +908,7 @@ void Mesh::UserWorkInLoop() {
                 ////////////////////
                 // including latent heat
                 // (Yu, 2025-11-16) Updated to use PhaseChange module arrays
+                // [26.09.01]Zhixuan: again we use q_diff in the main code, for puregas run.
                 q_z(tk,tj,ti) = q_irr + q_vis + q_diff(tk,tj,ti);
 
                 if (pmb->pphase_change != nullptr) {
@@ -919,16 +920,16 @@ void Mesh::UserWorkInLoop() {
                 q_int_f(tk,tj+1,ti) = q_z(tk,tj,ti)*dx2 + q_int_f(tk,tj,ti);
                 q_int(tk,tj,ti) = 0.5*(q_int_f(tk,tj+1,ti) + q_int_f(tk,tj,ti));
 
-                if (ti ==42 && tj ==48){
-                  std::cout << "======================================" << std::endl;
-                  std::cout <<"tj, ti = " << tj <<','<<ti<< std::endl;
-                  std::cout << "q_z = " << q_z(tk,tj,ti) << std::endl;
-                  std::cout << "q_irr = " << q_irr << std::endl;
-                  std::cout << "q_vis = " << q_vis << std::endl;
-                  std::cout << "q_latent = " << pmb->pphase_change->q_latent(k,j,i) << std::endl;
-                  std::cout << "q_diff = " << q_diff(tk,tj,ti) << std::endl;
-                  std::cout <<"check" << std::endl;
-                }
+                // if (ti ==42 && tj ==48){
+                //   std::cout << "======================================" << std::endl;
+                //   std::cout <<"tj, ti = " << tj <<','<<ti<< std::endl;
+                //   std::cout << "q_z = " << q_z(tk,tj,ti) << std::endl;
+                //   std::cout << "q_irr = " << q_irr << std::endl;
+                //   std::cout << "q_vis = " << q_vis << std::endl;
+                //   std::cout << "q_latent = " << pmb->pphase_change->q_latent(k,j,i) << std::endl;
+                //   std::cout << "q_diff = " << q_diff(tk,tj,ti) << std::endl;
+                //   std::cout <<"check" << std::endl;
+                // }
                 // Simpson's 1/3 rule:
                 // q_int(tk,tj,ti) = q_int(tk,tj-2,ti) +  dx2/3.0*(q_z(tk,tj-2,ti) + 4.0*q_z(tk,tj-1,ti) + q_z(tk,tj,ti));
                 // Trapezoidal rule:
@@ -968,16 +969,24 @@ void Mesh::UserWorkInLoop() {
                 Real F_inf = q_int_f(tk, mesh_size.nx2+NGHOST, ti);
                 
                 // linear interpolation
-                tau_eff_f(tk,tj+1,ti) = rhokappa(tk,tj,ti)*(1.0 - q_int(tk,tj,ti)/F_inf) * dx2 + tau_eff_f(tk,tj,ti);
+                Real w = 1.0 - q_int(tk,tj,ti)/F_inf;
+                // if (w<0.0){
+                //   // std::cout << "w < 0, tk,tj,ti = " << tk <<','<<tj<<','<<ti<< std::endl;
+                //   // std::cout << "q_int = " << q_int(tk,tj,ti) << std::endl;
+                //   // std::cout << "F_inf = " << F_inf << std::endl;
+                //   w = 0.0;
+                // }
+
+                tau_eff_f(tk,tj+1,ti) = rhokappa(tk,tj,ti)*w * dx2 + tau_eff_f(tk,tj,ti);
                 tau_eff(tk,tj,ti) = 0.5*(tau_eff_f(tk,tj+1,ti) + tau_eff_f(tk,tj,ti));
-                if (ti ==42 && tj ==48){
-                  std::cout << "tau_eff < 0, tk,tj,ti = " << tk <<','<<tj<<','<<ti<< std::endl;
-                  std::cout << "tau_eff_f(tk,tj+1,ti) = " << tau_eff_f(tk,tj+1,ti) << std::endl;
-                  std::cout << "tau_eff_f(tk,tj,ti) = " << tau_eff_f(tk,tj,ti) << std::endl;
-                  std::cout << "rhokappa = " << rhokappa(tk,tj,ti) << std::endl;
-                  std::cout << "q_int = " << q_int(tk,tj,ti) << std::endl;
-                  std::cout << "F_inf = " << F_inf << std::endl;
-                }
+                // if (ti ==42 && tj ==48){
+                //   std::cout << "tau_eff < 0, tk,tj,ti = " << tk <<','<<tj<<','<<ti<< std::endl;
+                //   std::cout << "tau_eff_f(tk,tj+1,ti) = " << tau_eff_f(tk,tj+1,ti) << std::endl;
+                //   std::cout << "tau_eff_f(tk,tj,ti) = " << tau_eff_f(tk,tj,ti) << std::endl;
+                //   std::cout << "rhokappa = " << rhokappa(tk,tj,ti) << std::endl;
+                //   std::cout << "q_int = " << q_int(tk,tj,ti) << std::endl;
+                //   std::cout << "F_inf = " << F_inf << std::endl;
+                // }
                 // Simpson's 1/3 rule:
                 // tau_eff(tk,tj,ti) = tau_eff(tk,tj-2,ti) + dx2/3.0*(rhokappa(tk,tj-2,ti)*(1.0 - q_int(tk,tj-2,ti)/F_inf) + 4.0*rhokappa(tk,tj-1,ti)*(1.0 - q_int(tk,tj-1,ti)/F_inf) + rhokappa(tk,tj,ti)*(1.0 - q_int(tk,tj,ti)/F_inf));
                 // Trapezoidal rule:
@@ -1754,6 +1763,18 @@ Real Get_mu(Real fv){
 void MySource(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<Real> &prim,
     const AthenaArray<Real> &prim_df, const AthenaArray<Real> &prim_s, const AthenaArray<Real> &bcc,
     AthenaArray<Real> &cons, AthenaArray<Real> &cons_df, AthenaArray<Real> &cons_s){
+
+  //[26.10.10]Zhixuan: still the hydro step will generate some nan values.... 
+  for (int k=pmb->ks; k<=pmb->ke; ++k) {
+    for (int j=pmb->js; j<=pmb->je; ++j) {
+      for (int i=pmb->is; i<=pmb->ie; ++i) {
+        for (int n=0; n<NDUSTFLUIDS; ++n) {
+          Real &den = pmb->pdustfluids->df_u(4*n, k, j, i);
+          if (!(den > dffloor)) den = dffloor;      // 同时挡住 NaN
+        }
+      }
+    }
+  }
 
   RadiativeCondution(pmb, time, dt, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s);
   LocalIsothermalEOS(pmb, time, dt, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s);

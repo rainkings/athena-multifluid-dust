@@ -356,6 +356,7 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
       for (int i = pmb->is; i <= pmb->ie; ++i) {
         //1. Gather current state
         const Real source_floor = source_floor_;
+        const Real source_floorn = source_floor_;
         int NFLUIDS = NDUSTFLUIDS - 1 - N_P;   // number of dust fluids (excluding vapor & number density)
         AthenaArray<Real> rhos, v1s, v2s, v3s, ns;
         rhos.NewAthenaArray(NFLUIDS);
@@ -425,6 +426,12 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
         Real m_max = FOUR_3RD * PI * SQR(s_max)*s_max * rho_inte_relax;
         mmax_array(k, j, i) = m_max;
 
+        if (m_max <= mmin) {
+          // std::cout << "Warning: m_max <= mmin at cell (" << k << "," << j << "," << i << "). Skipping relaxation." << std::endl;
+          t_relax(k, j, i) = 0.0; // Set relaxation time to zero to indicate no relaxation
+          continue;
+        }
+
         AthenaArray<Real> rho_comps, s_p_array;
         s_p_array.NewAthenaArray(N_P);
         for (int p = 0; p < N_P; ++p) {
@@ -478,6 +485,8 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
         M2_relax.NewAthenaArray(N_P);
         n_relax.NewAthenaArray(N_P);
         rho_pop_relax.NewAthenaArray(N_P);
+        cs2 = Tem / KELVIN / Get_mu(fv);
+        vth = std::sqrt(8.0 / PI * cs2);
 
         for (int p = 0; p < N_P; ++p) {
           Real m_low, m_high;
@@ -513,6 +522,27 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
         // number density of largest bin (volumetric)
         Real rho_Np_vol = cons_df(4 * (N_P*N_Z + 1 + largest_bin), k, j, i);
         Real trelax = 1.0 / (4.0 * rho_Np_vol * PI * SQR(s_p_array(largest_bin)) * delV) * T_relax_prefactor;
+
+        //[26.10.10]Zhixuan: Now we try to use the relaxed stae quantities to calculate the relaxation timescale. 
+        // Real m1_relax = M2_relax(N_P-1)/M1_relax(N_P-1); // the characteristic mass of the largest bin in the relaxed state
+        // Real s1_relax = std::pow(m1_relax/(FOUR_3RD*PI*rho_inte_relax), ONE_3RD);
+        //
+        // Real St1_relax = rho_inte_relax*s1_relax/(vth*rho_g)*OmegaK;
+        // Real delV_relax = std::sqrt(3.0 * alpha_vis * St1_relax * cs2);
+        // Real rho_Np_vol_relax = n_relax(N_P-1); // number density of largest bin (volumetric) in the relaxed state
+        // Real trelax = 1.0 / (4.0 * rho_Np_vol_relax * PI * SQR(s1_relax) * delV_relax) * T_relax_prefactor;
+        //
+        // int dk     = NGHOST;
+        // int dj     = NGHOST;
+        // if (pmb->block_size.nx3 == 1) dk = 0;
+        // if (pmb->block_size.nx2 == 1) dj = 0;
+        // int kl = pmb->ks - dk;     int ku = pmb->ke + dk;
+        // int jl = pmb->js - dj;     int ju = pmb->je + dj;
+        // int il = pmb->is - NGHOST; int iu = pmb->ie + NGHOST;
+        // int ti = static_cast<int>(pmb->loc.lx1)*pmb->block_size.nx1+(i-il);
+        // int tj = static_cast<int>(pmb->loc.lx2)*pmb->block_size.nx2+(j-jl);
+        // int tk = static_cast<int>(pmb->loc.lx3)*pmb->block_size.nx3+(k-kl);
+
         t_relax(k,j,i) = trelax; // store for diagnostics
         Real relax_rate = dt / trelax;
         // [26.06.24]Zhixuan: Not an elegent way ...
@@ -526,23 +556,19 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
             int dust_id = N_Z * p + zi;
             Real rho_target = rho_pop_relax(p) * comp_ratio(zi);
             Real rho_current = cons_df(4*dust_id, k, j, i);
-            if (rho_target < rho_current) {
+            if (rho_target < rho_current || rho_target < source_floor) {
               Real denom = rho_current - rho_target;
-              if (denom > 0.0) {
-                Real rate_max = (rho_current - source_floor)/denom;
-                if (rate_max < relax_rate_limited) relax_rate_limited = rate_max;
-              }
+              Real rate_max = (rho_current - source_floor)/denom;
+              if (rate_max < relax_rate_limited) relax_rate_limited = rate_max;
             }
           }
           int n_id = N_Z * N_P + 1 + p;
           Real n_target = n_relax(p);
           Real n_current = cons_df(4*n_id, k, j, i);
-          if (n_target < n_current) {
+          if (n_target < n_current || n_target < source_floorn) {
             Real denom = n_current - n_target;
-            if (denom > 0.0) {
-              Real rate_max = (n_current - source_floor)/denom;
-              if (rate_max < relax_rate_limited) relax_rate_limited = rate_max;
-            }
+            Real rate_max = (n_current - source_floorn)/denom;
+            if (rate_max < relax_rate_limited) relax_rate_limited = rate_max;
           }
         }
         if (relax_rate_limited <= 0.0) {

@@ -92,6 +92,13 @@ class DustFluids {
   Real const_stopping_time[NDUSTFLUIDS]; // Constant stopping time of dust
   Real const_nu_dust[NDUSTFLUIDS];       // Constant concentration diffusivity of dust
 
+  // [26.09.18]Zhixuan: cap on the dust speed used ONLY in the CFL constraint of
+  // NewAdvectionDt. The cap is applied only in cells whose dust density has reached the
+  // dust floor (dffloor), where the velocity carries no mass and must not restrict dt.
+  // vel_ceiling_factor_ is expressed in units of the LOCAL gas sound speed.
+  Real vel_ceiling_factor_;
+  Real dffloor_;
+
   AthenaArray<Real> inflx_dust_x1; // influx x1 direction (Yu, 2025-11-18) array
 
   // Public functions:

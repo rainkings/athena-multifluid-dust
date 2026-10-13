@@ -91,6 +91,12 @@ DustFluids::DustFluids(MeshBlock *pmb, ParameterInput *pin)  :
 
   SoundSpeed_Flag = pin->GetOrAddBoolean("dust", "Dust_SoundSpeed_Flag", false);
 
+  // [26.09.18]Zhixuan: velocity ceiling for the CFL constraint in NewAdvectionDt.
+  // Applied ONLY in cells at/below the dust density floor (see new_blockdt_dustfluids.cpp).
+  vel_ceiling_factor_ = pin->GetOrAddReal("dust", "st_vel_ceiling", 3.0);
+  dffloor_            = pin->GetOrAddReal("dust", "dffloor",
+                                            std::sqrt(1024.0*std::numeric_limits<float>::min()));
+
   // If dust is inviscid, then sound speed flag is set as false
   if (!dfdif.Diffusion_Flag) SoundSpeed_Flag = false;
   if (SoundSpeed_Flag) solver_id = 3;

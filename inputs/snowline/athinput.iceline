@@ -84,6 +84,7 @@ Dissipation_Flag              = true            # The flag of gas energy dissipa
 
 solver_id                     = 0               # The id of dust Riemann solver, from 0 to 3. The default value is 0. The "solver_id = 0" is for the penetrated solver, 1 for the non-penetrated solver, 2 for the HLLE solver without the sound speed of dust, 3 for the HLLE solver with the sound speed of dust.
 dffloor                       = 1.e-15           # The density floor for all dust fluids.
+st_vel_ceiling                = 3.0              # [26.09.18] Cap |v_d| at this many local gas sound speeds, ONLY inside the CFL constraint and ONLY in cells with rho_d <= dffloor. Set <= 0 to disable.
 dust_xorder                   = 2               #
 time_drag                     = 0.0             # The drag terms will be valid when time >= time_drag. There is no drag between gas and dust when time < time_drag. The default value is 0.0, it means that dust-gas drags are valid at the beginning of simulations.
 T_eddy                        = 1.0             # The turnover time of turbulent eddy, the default value is 1.0 .

@@ -52,6 +52,14 @@ Real DustFluids::NewAdvectionDt() {
   int min_dust_id = 0, min_dir = 1;
   int min_i = is, min_j = js, min_k = ks;
 
+  // [26.09.18]Zhixuan: velocity ceiling for the CFL constraint ONLY. The primitive and
+  // conserved dust states are NOT modified anywhere: the cap enters the denominator of
+  // dt = dx/|v| and nothing else. It is applied only in cells whose dust density has
+  // reached the dust floor (dffloor), where |v| = |mom|/dffloor carries no mass across a
+  // face and therefore must not restrict the timestep. Since min(|v|,v_ceil) <= |v|,
+  // dt can only become LARGER than before, so no new CFL/stability constraint is created.
+  long int n_capped = 0;
+
   FluidFormulation fluid_status = pmb->pmy_mesh->fluid_setup;
   //[26.06.13]Zhixuan: change this to NP*NZ +1, so that the number density will not influence the timestep
   for (int n=0; n<N_P*N_Z+1; ++n) {
@@ -66,6 +74,8 @@ Real DustFluids::NewAdvectionDt() {
         pmb->pcoord->CenterWidth2(k, j, is, ie, dt2);
         pmb->pcoord->CenterWidth3(k, j, is, ie, dt3);
 
+        long int n_capped_local = 0;   // per-slice cap counter (kept out of the SIMD loop)
+
 #pragma ivdep
         for (int i=is; i<=ie; ++i) {
           df_w_i[rho_id] = df_w(rho_id, k, j, i);
@@ -73,14 +83,39 @@ Real DustFluids::NewAdvectionDt() {
           df_w_i[v2_id]  = df_w(v2_id,  k, j, i);
           df_w_i[v3_id]  = df_w(v3_id,  k, j, i);
 
+          // ---- [26.09.18]Zhixuan: dust speed ceiling in the CFL constraint ONLY ----
+          // v_ceil = vel_ceiling_factor_ * cs_gas, with cs_gas recovered from the gas
+          // primitive state via p = cs^2 * rho (no gamma/mu needed, works with the
+          // general/phase_change EOS). The ceiling is engaged only where the dust density
+          // has reached the dust floor; there the velocity carries no mass, so it must not
+          // be allowed to restrict dt. Above the floor the raw velocity is used unchanged.
+          const Real rho_d_cell = df_w_i[rho_id];
+          Real v_ceil = 0.0;
+          if (rho_d_cell <= dffloor_) {
+            const Real rho_g = pmb->phydro->w(IDN, k, j, i);
+            const Real cs_g  = (rho_g > 0.0)
+                ? std::sqrt(std::max(pmb->phydro->w(IPR, k, j, i)/rho_g, 0.0)) : 0.0;
+            v_ceil = vel_ceiling_factor_*cs_g;
+          }
+
+          Real v1_abs = std::abs(df_w_i[v1_id]);
+          Real v2_abs = std::abs(df_w_i[v2_id]);
+          Real v3_abs = std::abs(df_w_i[v3_id]);
+          if (v_ceil > 0.0) {
+            if (v1_abs > v_ceil) { v1_abs = v_ceil; ++n_capped_local; }
+            if (v2_abs > v_ceil) { v2_abs = v_ceil; ++n_capped_local; }
+            if (v3_abs > v_ceil) { v3_abs = v_ceil; ++n_capped_local; }
+          }
+
           if ((fluid_status == FluidFormulation::evolve) && SoundSpeed_Flag) {
-            dt1(i) /= (std::abs(df_w_i[v1_id]) + cs_dustfluids_array(dust_id, k, j, i));
-            dt2(i) /= (std::abs(df_w_i[v2_id]) + cs_dustfluids_array(dust_id, k, j, i));
-            dt3(i) /= (std::abs(df_w_i[v3_id]) + cs_dustfluids_array(dust_id, k, j, i));
+            Real cs_d = cs_dustfluids_array(dust_id, k, j, i);
+            dt1(i) /= (v1_abs + cs_d);
+            dt2(i) /= (v2_abs + cs_d);
+            dt3(i) /= (v3_abs + cs_d);
           } else { // FluidFormulation::background or disabled. Assume scalar advection:
-            dt1(i) /= (std::abs(df_w_i[v1_id]));
-            dt2(i) /= (std::abs(df_w_i[v2_id]));
-            dt3(i) /= (std::abs(df_w_i[v3_id]));
+            dt1(i) /= (v1_abs);
+            dt2(i) /= (v2_abs);
+            dt3(i) /= (v3_abs);
           }
           //[26.06.21]Zhixuan: if the timestep is too small, print out the information and exit
             if (dt1(i) <= 1.e-3 || dt2(i) <= 1.e-3 || dt3(i) <= 1.e-3) {
@@ -126,6 +161,8 @@ Real DustFluids::NewAdvectionDt() {
             }
           }
         }
+
+        n_capped += n_capped_local;   // fold this slice's cap count into the running total
       }
     }
   }
@@ -144,6 +181,17 @@ Real DustFluids::NewAdvectionDt() {
     min_dt_hyperbolic_k = static_cast<int>(pmb->loc.lx3)*pmb->block_size.nx3
                           + (min_k - pmb->ks) + NGHOST;
   }
+
+  // [26.09.18]Zhixuan: diagnostic only - reports how many (cell,direction) pairs were
+  // capped by the floor-gated velocity ceiling. Disable by setting st_vel_ceiling <= 0.
+  // if (n_capped > 0) {
+  //   std::cout << "### NewAdvectionDt: dust speed ceiling (" << vel_ceiling_factor_
+  //             << "*cs_gas, applied only where rho_d <= dffloor = " << dffloor_ << ") hit "
+  //             << n_capped << " (cell,direction) pairs; capped min dt = "
+  //             << min_dt_hyperbolic_df << " at dust_id = " << min_dust_id
+  //             << ", dir = " << min_dir << ", (k,j,i) = (" << min_k << ", " << min_j
+  //             << ", " << min_i << ")" << std::endl;
+  // }
 
   return min_dt_hyperbolic_df;
 }
