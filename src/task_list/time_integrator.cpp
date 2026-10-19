@@ -1872,6 +1872,8 @@ TaskStatus TimeIntegratorTaskList::ClearAllBoundary(MeshBlock *pmb, int stage) {
 // Functions to calculates Hydro fluxes
 
 TaskStatus TimeIntegratorTaskList::CalculateHydroFlux(MeshBlock *pmb, int stage) {
+  // Fixed-fluid runs do not advance hydro or scalars, so no Riemann solve is needed.
+  if (pmb->pmy_mesh->fluid_setup == FluidFormulation::fixed) return TaskStatus::next;
   Hydro *phydro = pmb->phydro;
   Field *pfield = pmb->pfield;
   DustFluids *pdf = pmb->pdustfluids;

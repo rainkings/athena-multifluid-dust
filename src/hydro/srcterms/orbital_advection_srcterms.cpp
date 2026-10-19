@@ -277,6 +277,23 @@ void HydroSourceTerms::OrbitalAdvectionSourceTerms
              temp1 += pf->bcc(IB1,k,j,i)*pf->bcc(IB3,k,j,i);
              temp2 += pf->bcc(IB2,k,j,i)*pf->bcc(IB3,k,j,i);
             }
+            // Viscous energy fluxes use the residual velocity, while their
+            // stresses use the full orbital velocity. The background-shear
+            // work must therefore enter the residual-energy source as well.
+            // Without it, a Keplerian flow with zero residual velocity has
+            // nonzero viscous torque but no viscous heating.
+            // visflx(momentum)=-tau, so the added work is
+            // -<F_vis,rphi>*(d_r vK-vK/r)
+            // -<F_vis,thetaphi>*(d_theta vK-vK*cot(theta))/r.
+            // This path covers explicit viscosity; STS needs separate treatment.
+            const HydroDiffusion &hd = pmy_hydro_->hdif;
+            if (!STS_ENABLED && hd.hydro_diffusion_defined
+                && (hd.alpha_disk_model || hd.nu_iso > 0 || hd.nu_aniso > 0)) {
+              temp1 -= 0.5*(hd.visflx[X1DIR](IM3,k,j,i)
+                           +hd.visflx[X1DIR](IM3,k,j,i+1));
+              temp2 -= 0.5*(hd.visflx[X2DIR](IM3,k,j,i)
+                           +hd.visflx[X2DIR](IM3,k,j+1,i));
+            }
             cons(IEN,k,j,i) += dt*(temp1*rdok_i+temp2*sdvk_j
                                +((src-grav)*flux_xc+src*cv1*flux_yc)/rv);
           }

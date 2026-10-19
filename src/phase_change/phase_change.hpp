@@ -44,7 +44,9 @@ class PhaseChange {
 
   // Public data arrays
   AthenaArray<Real> rho_Np_array;  // pebble number density array [1/cm^3] (Yu, 2025-11-18: replaced m_p_array and s_p_array)
-  AthenaArray<Real> q_latent;      // latent heat absorption/release rate [code unit]
+  // Latent heating per volume per code time: negative for sublimation.
+  // With thermal_energy=true it is diagnostic; gas energy already includes it.
+  AthenaArray<Real> q_latent;
   // AthenaArray<Real> m_p0_array;    // initial pebble mass array [g] (used to initialize rho_Np)
   AthenaArray<Real> mmax_array;    // maximum mass allowed by fragmentation [code mass]
   // AthenaArray<Real> m_p_array;     // the evolved pebble mass array, added for relaxation source term [code mass]
@@ -55,6 +57,9 @@ class PhaseChange {
   Real mmin; // minimum mass in the dust size distribution
   //
   Real Tem0, r0, Tslope; // do this for the moment [26.03.24]Zhixuan
+  // Largest relative local defects since this block was constructed. These
+  // diagnostics are not restart state or a global disk conservation budget.
+  Real max_energy_defect = 0, max_mass_defect = 0;
   Real Tem_gas(const Real rad);
   // Public functions
   void PhaseChangeSource(MeshBlock *pmb, const Real time, const Real dt,
@@ -82,6 +87,9 @@ class PhaseChange {
   
   // Problem-specific constants (initialized from ParameterInput)
   Real min_tol_;
+  // Opt-in with problem/thermal_energy: write the energy-balanced phase T back
+  // to conserved gas energy, instead of leaving T to legacy thermal relaxation.
+  bool energy_conserving_ = false;
   Real f_ICE_inter0_;
   Real rho_sil_inter_;
   Real rho_ice_inter_;

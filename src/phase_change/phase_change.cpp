@@ -69,6 +69,7 @@ PhaseChange::PhaseChange(MeshBlock *pmb, ParameterInput *pin):
   Units *punit = pmb->pmy_mesh->punit;
   
   min_tol_ = pin->GetOrAddReal("problem", "min_tol", 1.e-7);
+  energy_conserving_ = pin->GetOrAddBoolean("problem", "thermal_energy", false);
   f_ICE_inter0_ = pin->GetOrAddReal("problem", "f_ICE_inter0", 0.5);
 
   Tem0 = pin->GetOrAddReal("problem", "Tem0", 150.0); // [K]
@@ -178,6 +179,20 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
           Real d_vel1 = cons_df(v1_id, k, j, i) / rho_I_p;
           Real d_vel2 = cons_df(v2_id, k, j, i) / rho_I_p;
           Real d_vel3 = cons_df(v3_id, k, j, i) / rho_I_p;
+          if (energy_conserving_) {
+            // Ice and refractory are constituents of the same pebble. The
+            // pgen already enforces their shared velocity at timestep end;
+            // enforce it before each phase solve too. A floored, depleted ice
+            // density can otherwise carry a spurious enormous specific KE.
+            const int refractory = 4*(N_Z*(p+1)-1);
+            const Real density = cons_df(refractory,k,j,i);
+            d_vel1 = cons_df(refractory+1,k,j,i)/density;
+            d_vel2 = cons_df(refractory+2,k,j,i)/density;
+            d_vel3 = cons_df(refractory+3,k,j,i)/density;
+            cons_df(v1_id,k,j,i) = rho_I_p*d_vel1;
+            cons_df(v2_id,k,j,i) = rho_I_p*d_vel2;
+            cons_df(v3_id,k,j,i) = rho_I_p*d_vel3;
+          }
           
           // Store ice density for pebble p
           rho_d_array(p) = rho_I_p;
@@ -225,15 +240,38 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
         rho_d_array1 = rho_d_array;
         rho_d_array0 = rho_d_array;
 
-        // Get total energy (conserved quantity)
+        // Local closed-system energy for this phase solve:
+        // E_gas + sum_p[rho_ice,p*(e_kin,p + c_ice*T - L_heat)].
+        // Vapor has zero chemical reference energy and ice has -L_heat per
+        // unit mass. Sublimation raises chemical energy and consumes heat;
+        // condensation releases it. Gas/ice share the incoming gas temperature.
         Real rhoe_g = gas_erg - E_kg*rho_g;
         Real Tem = Get_T_rhoe_g(rhoe_g, rho_g, fv);
+        const Real phase_initial_temperature = Tem;
         Real rhomu_d = Get_rhomu_d(rho_d_array); // chemical potential of volatiles. chemical potential of gas is set to be 0.
         Real rhoE_total = gas_erg + rhomu_d;
+        Real mass_total = rho_g;
         
         for (int p = 0; p < N_P; ++p) {
           rhoE_total += E_kd_array(p)*rho_d_array(p) + Cd_water*rho_d_array(p)*Tem;
+          mass_total += rho_d_array(p);
         }
+
+        // At fixed constituent velocities the material thermal energy after a
+        // vapor mass change dm is U - dm*(L + e_kg - sum(f_p*e_kp)). Bound mass
+        // trials by this available heat, so phase_trans never evaluates a
+        // negative-temperature branch. No temperature or energy is clipped.
+        // The 0.9 factor leaves a finite heat reserve for subsequent trials.
+        auto energy_limited_change = [&](Real change) {
+          if (!energy_conserving_) return change;
+          Real cost = L_heat+E_kg;
+          for (int p = 0; p < N_P; ++p) cost -= drho_d_ratio_array(p)*E_kd_array(p);
+          const Real available = Get_rhoe(rhoE_total,rho_g,E_kg,rho_d_array,E_kd_array);
+          if (change*cost > 0)
+            change = std::copysign(std::min(std::abs(change),
+                                    Real(0.9)*available/std::abs(cost)), change);
+          return change;
+        };
 
         // Define variables for iterative solver
         Real drho, rho_g1, rho_v1;
@@ -377,6 +415,7 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
         // }
         //
 
+        drho_limit = std::abs(energy_limited_change(sign*drho_limit));
         // update gas, vapor, and dust with total supply
         rho_g1 = rho_g + drho_limit * sign;
         rho_v1 = rho_v + drho_limit * sign;
@@ -482,6 +521,7 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
               if (max_cond < 0.0) max_cond = 0.0;
               if (-drho_adp > max_cond) drho_adp = -max_cond;
             }
+            drho_adp = energy_limited_change(drho_adp);
             if (drho_adp == 0.0) break;
 
             x2 = x1 + drho_adp;
@@ -528,7 +568,28 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
         }
 
         // Calculate latent heat absorption/release rate
-        q_latent(k,j,i) += -(rho_v - rho_v0)/(pmb->pmy_mesh->dt) * L_heat;
+        if (energy_conserving_) {
+          // VL2's final source evaluation acts over dt, from its own input
+          // conserved state. Latent heat is already paid by the energy-balanced
+          // phase solve below; retain this rate only as a diagnostic.
+          // Overwrite the predictor's diagnostic rather than adding stage rates.
+          q_latent(k,j,i) = -(rho_v-rho_v0)/dt*L_heat;
+          Tem = Get_T_rhoe(Get_rhoe(rhoE_total, rho_g, E_kg, rho_d_array, E_kd_array),
+                          rho_g, rho_d_array, rho_v/rho_g);
+          if (!(Tem > 0) || !std::isfinite(Tem)) {
+            std::stringstream msg;
+            msg << "### FATAL ERROR: nonpositive energy-balanced phase temperature at "
+                << pmb->gid << ':' << i << ',' << j << ',' << k
+                << " initial_T=" << phase_initial_temperature << " final_T=" << Tem
+                << " rho_g=" << rho_g << " rho_v=" << rho_v
+                << " total_E=" << rhoE_total << " initial_internal=" << rhoe_g
+                << " final_internal=" << Get_rhoe(rhoE_total,rho_g,E_kg,rho_d_array,E_kd_array)
+                << " delta_vapor=" << rho_v-rho_v0 << '\n';
+            ATHENA_ERROR(msg);
+          }
+        } else {
+          q_latent(k,j,i) += -(rho_v-rho_v0)/(pmb->pmy_mesh->dt)*L_heat;
+        }
         // std::cout << "At (i,j,k)=(" << i << "," << j << "," << k << "):" << std::endl
         //   << "q_latent = " << q_latent(k,j,i) << std::endl;
 
@@ -570,6 +631,18 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
         gas_mom2 = rho_g*gas_vel_array(1);
         gas_mom3 = rho_g*gas_vel_array(2);
         gas_erg = (prs/(gamma - 1.0) + rho_g*E_kg);
+        if (energy_conserving_) {
+          // Reassemble the same gas+ice energy/mass to audit this local exchange.
+          // Ice sensible heat is implicit at the common T, not a dust energy field.
+          Real final_energy = gas_erg+Get_rhomu_d(rho_d_array), final_mass = rho_g;
+          for (int p = 0; p < N_P; ++p) {
+            final_energy += rho_d_array(p)*(E_kd_array(p)+Cd_water*Tem);
+            final_mass += rho_d_array(p);
+          }
+          max_energy_defect = std::max(max_energy_defect, std::abs(final_energy-rhoE_total)
+              /std::max(std::abs(rhoE_total)+std::abs(rhomu_d), Real(1e-30)));
+          max_mass_defect = std::max(max_mass_defect, std::abs(final_mass/mass_total-1));
+        }
         
         // Update ice momenta for all pebble sizes
         for (int p = 0; p < N_P; ++p) {

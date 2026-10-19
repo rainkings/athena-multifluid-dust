@@ -6,6 +6,13 @@
 //! \file disk.cpp
 //! \brief Initializes stratified Keplerian accretion disk in both cylindrical and
 //! spherical polar coordinates.  Initial conditions are in vertical hydrostatic eqm.
+//!
+//! Thermal modes (problem input):
+//!   thermal_energy=false: legacy analytic equilibrium and beta relaxation.
+//!   thermal_energy=true:  hydro/phase energy followed by implicit column RT.
+//!   thermal_test=true:    frozen-disk comparisons; excludes thermal_energy.
+//! The shared equations, normalization, and boundary conditions are documented
+//! in snowline_twostream.hpp; source accounting is in snowline_thermal_energy.hpp.
 
 // C headers
 
@@ -15,6 +22,7 @@
 #include <cstdlib>    // srand
 #include <cstring>    // strcmp()
 #include <fstream>
+#include <iomanip>
 #include <iostream>   // endl
 #include <limits>
 #include <sstream>    // stringstream
@@ -41,6 +49,9 @@
 #include "../phase_change/phase_change_constants.hpp"  // (Yu, 2025-11-16) For constants: KELVIN, P_eq0, L_heat, etc.
 #include "../units/units.hpp"  // (Yu, 2025-11-16) For Constants namespace
 #include "../relaxation/relaxation.hpp" //[26.04.29]Zhixuan 
+// Both adapters use snowline_twostream.hpp; test controls stay in the test adapter.
+#include "snowline_thermal_test.hpp"
+#include "snowline_thermal_energy.hpp"
 
 namespace {
 void GetCylCoord(Coordinates *pco,Real &rad,Real &phi,Real &z,int i,int j,int k);
@@ -105,6 +116,8 @@ Real damping_rate, radius_inner_damping, radius_outer_damping, inner_ratio_regio
 Real min_tol, max_dfvdt, injection_Tsoft, t_restart;
 Real kappa0, t_iterate, beta, f_vi, damping_ratio;
 AthenaArray<Real> v_frag;
+SnowlineThermalTest::Comparison thermal_test;
+SnowlineThermalEnergy::Evolution thermal_energy;
 
 namespace UserOutVar {
 constexpr int kDustVarsPerPopulation = 7;
@@ -312,6 +325,9 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   theta_upper_damping = x2min + upper_altitude_damping;
   theta_lower_damping = x2max - upper_altitude_damping; //not used
 
+  thermal_test.Configure(pin, this);
+  thermal_energy.Configure(pin, this);
+
   // The normalized wave damping timescale, in unit of dynamical timescale.
   damping_rate = pin->GetOrAddReal("problem", "damping_rate", 1.0);
 
@@ -433,6 +449,20 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
 
 // enroll user defined output variables
 void MeshBlock::InitUserMeshBlockData(ParameterInput *pin){
+  if (thermal_test.enabled) {
+    AllocateUserOutputVariables(SnowlineThermalTest::kCount);
+    const char *names[] = {"T_energy", "T_2sRT", "T_FV_eq", "T_rel_error", "tau_IR",
+                           "q_irr_over_chi_sigmaT4", "Psi_over_sigmaT4", "rho_initial",
+                           "q_cool_over_chi_sigmaT4", "eq_status", "T_irr_eq",
+                           "T_pulse_end", "T_pulse_eq", "pulse_eq_status", "pulse_eq_T4",
+                           "q_vis_native", "q_vis_prescribed", "T_prescribed_eq"};
+    for (int n = 0; n < SnowlineThermalTest::kCount; ++n) {
+      SetUserOutputVariableName(n, names[n]);
+    }
+    if (thermal_test.viscous_test)
+      SetUserOutputVariableName(SnowlineThermalTest::kIrrEq, "T_source_eq");
+    return;
+  }
   // record the restart time
   t_restart = pmy_mesh->time;
 
@@ -451,7 +481,10 @@ void MeshBlock::InitUserMeshBlockData(ParameterInput *pin){
       for (int j=jl; j<=ju; j++) {
         for (int i=il; i<=iu; i++) {
           int ti = static_cast<int>(loc.lx1)*block_size.nx1+(i-il);
-          int tj = static_cast<int>(loc.lx2)*block_size.nx2+(j-jl);
+          const int raw_tj = static_cast<int>(loc.lx2)*block_size.nx2+(j-jl);
+          // Global column arrays contain active theta cells and upper ghosts,
+          // but no ghosts below the reflecting midplane.
+          const int tj = std::min(raw_tj, 2*(pmy_mesh->mesh_size.nx2+NGHOST)-1-raw_tj);
           int tk = static_cast<int>(loc.lx3)*block_size.nx3+(k-ks);
 
           phydro->Tem(k, j, i) = pmy_mesh->ruser_mesh_data[4](tk,tj,ti);
@@ -554,6 +587,32 @@ void MeshBlock::InitUserMeshBlockData(ParameterInput *pin){
 //========================================================================================
 
 void MeshBlock::ProblemGenerator(ParameterInput *pin) {
+  if (thermal_test.enabled) {
+    // Freeze the original disk density, independently of the hot/cold thermal start.
+    // The fixed-fluid task list disables hydro integration and source terms.
+    for (int k = ks; k <= ke; ++k) {
+      for (int j = js-NGHOST; j <= je+NGHOST; ++j) {
+        for (int i = is-NGHOST; i <= ie+NGHOST; ++i) {
+          Real rad, phi, z;
+          GetCylCoord(pcoord, rad, phi, z, i, j, k);
+          const Real base = TemProfile(rad, phi, z);
+          const Real rho = DenProfileCyl_gas_fv_T(rad, phi, z, 0, base);
+          const Real temperature = base*thermal_test.initial_factor;
+          for (int n = 0; n < NDUSTFLUIDS; ++n) {
+            pdustfluids->df_u(4*n,k,j,i) = dffloor;
+            for (int v = 1; v <= 3; ++v) pdustfluids->df_u(4*n+v,k,j,i) = 0;
+            pdustfluids->stopping_time_array(n,k,j,i) = 1;
+          }
+          const Real fv = dffloor/rho, mu = Get_mu(fv);
+          phydro->u(IDN,k,j,i) = rho;
+          phydro->u(IM1,k,j,i) = phydro->u(IM2,k,j,i) = phydro->u(IM3,k,j,i) = 0;
+          phydro->u(IEN,k,j,i) = rho*temperature/(KELVIN*mu*(peos->calc_gamma(fv)-1));
+          phydro->Tem(k,j,i) = temperature;
+        }
+      }
+    }
+    return;
+  }
   Real rad(0.0), phi(0.0), z(0.0); // cylindrical coordinate
   Real x1, x2, x3; // sphercial coordinate
 	Real igm1 = 1.0/(gamma_gas - 1.0);
@@ -767,6 +826,20 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
 }
 
 void Mesh::UserWorkInLoop() {
+  if (thermal_test.enabled) {
+    if (!thermal_test.initialized) {
+      thermal_test.Initialize(this, kappa0, f_vi, L_star, r0, qvalue, gm0,
+                             DenProfileCyl_gas_fv_T, TemProfile);
+    }
+    thermal_test.Advance(this);
+    return;
+  }
+  if (thermal_energy.enabled) {
+    // Hydro and phase change have finished their VL2 stages. Evolve remaining
+    // irradiation/radial heat at fixed material masses before refreshing the
+    // pgen's temperature-dependent boundary profiles below.
+    thermal_energy.Advance(this, kappa0, f_vi, L_star, r0, qvalue);
+  }
   // some constants
   Real Mdot_gas = -M_dot_g* Constants::solar_mass_cgs/ Constants::yr_cgs / 2.0; // in cgs
   Mdot_gas /= (punit->code_mass_cgs /punit->code_time_cgs);
@@ -791,7 +864,7 @@ void Mesh::UserWorkInLoop() {
   rhokappa.NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
 
   /////////////////////////////////////////////////////////////////////////
-  if(Allow_T_change_Flag){
+  if(Allow_T_change_Flag && !thermal_energy.enabled){
     // step 0, calculate tau_vi
     for (int bn=0; bn<nblocal; ++bn) {
       MeshBlock *pmb = my_blocks(bn);
@@ -1073,6 +1146,8 @@ void Mesh::UserWorkInLoop() {
                   std::cout << "ti, tj = " << ti << " " << tj << std::endl;
                   std::cout << "tau_eff = " << tau_eff(tk,tj,ti) << std::endl;
                   std::cout << "q_z = " << q_z(tk,tj,ti) << std::endl;
+                  std::cout << "cycle, time = " << ncycle+1 << ' '
+                            << std::setprecision(17) << time+dt << std::endl;
                   quick_exit(1);
                 }
 
@@ -1427,6 +1502,7 @@ void Mesh::UserWorkInLoop() {
 
 
 void MeshBlock::UserWorkInLoop(){
+  if (thermal_test.enabled) return;
   int dk     = NGHOST;
   int dj     = NGHOST;
   if (block_size.nx3 == 1) dk = 0;
@@ -1624,6 +1700,14 @@ void MeshBlock::UserWorkInLoop(){
 
 
 void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin){
+  if (thermal_test.enabled) {
+    if (!thermal_test.initialized) {
+      thermal_test.Initialize(pmy_mesh, kappa0, f_vi, L_star, r0, qvalue, gm0,
+                             DenProfileCyl_gas_fv_T, TemProfile);
+    }
+    thermal_test.OutputBlock(this);
+    return;
+  }
 
   int dk     = NGHOST;
   int dj     = NGHOST;
@@ -1737,7 +1821,8 @@ void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin){
     for (int j=jl; j<=ju; ++j) {
       for (int i=il; i<=iu; ++i) {
         int ti = static_cast<int>(loc.lx1)*block_size.nx1+(i-il);
-        int tj = static_cast<int>(loc.lx2)*block_size.nx2+(j-jl);
+        const int raw_tj = static_cast<int>(loc.lx2)*block_size.nx2+(j-jl);
+        const int tj = std::min(raw_tj, 2*(pmy_mesh->mesh_size.nx2+NGHOST)-1-raw_tj);
         int tk = static_cast<int>(loc.lx3)*block_size.nx3+(k-kl);
 
         // radiative heating rate, q_z
@@ -1776,6 +1861,22 @@ void MySource(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<
     }
   }
 
+  if (thermal_energy.enabled) {
+    // Hydro evolves internal energy in this mode. Refresh the temperature
+    // used by the explicit radial-conduction source from that conserved state.
+    for (int k=pmb->ks; k<=pmb->ke; ++k) {
+      for (int j=pmb->js; j<=pmb->je; ++j) {
+        for (int i=pmb->is; i<=pmb->ie; ++i) {
+          const Real rho = cons(IDN,k,j,i);
+          const Real kinetic = (SQR(cons(IM1,k,j,i))+SQR(cons(IM2,k,j,i))
+                                +SQR(cons(IM3,k,j,i)))/(2*rho);
+          const Real fv = cons_df(4*vapor_id,k,j,i)/rho;
+          pmb->phydro->Tem(k,j,i) = (cons(IEN,k,j,i)-kinetic)*KELVIN*Get_mu(fv)
+                                   *(pmb->peos->calc_gamma(fv)-1)/rho;
+        }
+      }
+    }
+  }
   RadiativeCondution(pmb, time, dt, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s);
   LocalIsothermalEOS(pmb, time, dt, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s);
   if(N_Z > 1 and time > t_iterate and PhaseChange_Flag){  // (Yu, 2025-11-16)
@@ -1879,6 +1980,10 @@ void LocalIsothermalEOS(MeshBlock *pmb, const Real time, const Real dt, const At
     const AthenaArray<Real> &prim_df, const AthenaArray<Real> &prim_s, const AthenaArray<Real> &bcc,
     AthenaArray<Real> &cons, AthenaArray<Real> &cons_df, AthenaArray<Real> &cons_s){
 
+    // Preserve compression, viscous heating, and subsequent phase-energy changes.
+    // Resetting energy to a prescribed T here would erase the hydro energy update.
+    if (thermal_energy.enabled) return;
+
     OrbitalVelocityFunc &vK = pmb->porb->OrbitalVelocity;
     for (int k=pmb->ks; k<=pmb->ke; ++k) {
       Real x3 = pmb->pcoord->x3v(k);
@@ -1980,7 +2085,7 @@ void RadiativeCondution(MeshBlock *pmb, const Real time, const Real dt, const At
     AthenaArray<Real> &x2flux = pmb->phydro->hdif.cndflx[X2DIR];
 
     Real kappaf, dTdx;
-    HydroDiffusion phdif = pmb->phydro->hdif;
+    const HydroDiffusion &phdif = pmb->phydro->hdif;
     
     AthenaArray<Real> x1area, x2area, x2area_p1, vol;
     x1area.NewAthenaArray(pmb->ncells1+1);
@@ -2018,7 +2123,16 @@ void RadiativeCondution(MeshBlock *pmb, const Real time, const Real dt, const At
           //   f_decay_art2 = 0.0;
           // }
           Real f_decay_art3 = std::exp(-1.0/(tau_vi));
-          pmb->pmy_mesh->ruser_mesh_data[8](tk, tj, ti) += dt/pmb->pmy_mesh->dt*(x1area(i+1)*x1flux(k,j,i+1) - x1area(i)*x1flux(k,j,i))/(-vol(i)) *f_decay_art*f_decay_art2*f_decay_art3;
+          const Real rate = (x1area(i+1)*x1flux(k,j,i+1)-x1area(i)*x1flux(k,j,i))
+                            /(-vol(i))*f_decay_art*f_decay_art2*f_decay_art3;
+          if (thermal_energy.enabled) {
+            // The last VL2 evaluation supplies the midpoint radial source.
+            // Store a rate, not dt*rate. Advance applies it once over the full
+            // thermal step; changing conserved energy here would count it twice.
+            pmb->pmy_mesh->ruser_mesh_data[8](tk,tj,ti) = rate;
+          } else {
+            pmb->pmy_mesh->ruser_mesh_data[8](tk,tj,ti) += dt/pmb->pmy_mesh->dt*rate;
+          }
           // if (dt <=0.0){
           //   std::cout << "q_diff = " << pmb->pphase_change->q_diff(k, j, i) << std::endl;
           //   std::cout << "tau_vi = " << tau_vi << std::endl;

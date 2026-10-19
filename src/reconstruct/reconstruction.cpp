@@ -231,6 +231,9 @@ Reconstruction::Reconstruction(MeshBlock *pmb, ParameterInput *pin) :
   scr02_i_.NewAthenaArray(nc1);
 
   int nsize = std::max(NWAVE, NSCALARS);
+  // Dust tracer reconstruction passes r_ with NDUSTFLUIDS rows through the
+  // generic PLM/PPM routines. Multi-population runs can exceed NWAVE.
+  nsize = std::max(nsize, NDUSTFLUIDS);
   if(CR_ENABLED)
     nsize = std::max(nsize,5);
 

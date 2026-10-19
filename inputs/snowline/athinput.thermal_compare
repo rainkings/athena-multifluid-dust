@@ -1,0 +1,153 @@
+<comment>
+Irradiation-only comparison on the snowline disk grid. Fixed density and zero flow.
+Uses the existing disk_snowline_2D_RT_erg_2_twopop build (7 dust fluids, N_P=N_Z=2).
+Hydro and phase change are disabled. T_2sRT uses the original pgen quadrature;
+T_energy advances stored heat with implicit column RT. T_FV_eq isolates time-solver
+error from the difference in spatial quadrature. Each theta column is independent;
+this test deliberately excludes radial radiative diffusion and density iteration.
+For hydro/active=fixed, Athena++ sets dt=tlim/nlim (here dt=500 code time units).
+
+<job>
+problem_id = thermal_disk
+
+<output1>
+file_type = hdf5
+variable = prim
+dt = 64000
+
+<output2>
+file_type = hdf5
+variable = uov
+dt = 64000
+
+<output3>
+file_type = hdf5
+variable = cons
+dt = 64000
+
+<time>
+cfl_number = 0.4
+integrator = vl2
+xorder = 2
+nlim = 128
+tlim = 64000
+ncycle_out = 32
+dt_diagnostics = -1
+
+<mesh>
+nx1 = 160
+x1min = 3.94019670715
+x1max = 23.64118024275
+ix1_bc = outflow
+ox1_bc = outflow
+nx2 = 96
+x2min = 1.30
+x2max = 1.5707963267948966
+x2rat = -1
+ix2_bc = reflecting
+ox2_bc = reflecting
+nx3 = 1
+x3min = 0
+x3max = 3.141592653589793
+ix3_bc = periodic
+ox3_bc = periodic
+num_threads = 4
+
+<meshblock>
+nx1 = 20
+nx2 = 24
+nx3 = 1
+
+<hydro>
+active = fixed
+gamma = 1.4289
+dfloor = 1e-10
+pfloor = 1e-14
+
+<orbital_advection>
+OAorder = 0
+Omega0 = 0
+
+<dust>
+DustFeedback_Flag = false
+Diffusion_Flag = false
+Momentum_Diffusion_Flag = false
+Dissipation_Flag = false
+dffloor = 1e-20
+vfrag_1 = 1000
+vfrag_2 = 1000
+initial_D2G_1 = 1e-10
+initial_D2G_2 = 1e-10
+initial_D2G_3 = 1e-10
+initial_D2G_4 = 1e-10
+initial_D2G_5 = 1e-10
+initial_D2G_6 = 1e-10
+initial_D2G_7 = 1e-10
+Stokes_number_1 = 1e-4
+Stokes_number_2 = 1e-4
+Stokes_number_3 = 0.01
+Stokes_number_4 = 0.01
+Stokes_number_5 = 1e-8
+Stokes_number_6 = 1e-8
+Stokes_number_7 = 1e-8
+Hratio_1 = 1
+Hratio_2 = 1
+Hratio_3 = 0.5
+Hratio_4 = 0.5
+Hratio_5 = 1
+Hratio_6 = 1
+Hratio_7 = 1
+m_p0_1 = 6.7e-7
+m_p0_3 = 2
+
+<problem>
+thermal_test = true
+# Optional audit: measure viscous heat with the native hydro operators on a
+# prescribed Keplerian flow, then evolve heat at fixed density and shear.
+# Allows OAorder=0 or 2; q_vis_prescribed and T_prescribed_eq are independent
+# references using the original (9/4)*rho*(1-fv)*nu*Omega_K^2 prescription.
+thermal_test_viscous = false
+thermal_test_initial_factor = 0.5
+thermal_test_Tref = 150
+# Optional prescribed sink: integral(q_cool ds) = -A*F_irr times a radial
+# Gaussian. Its theta profile is a Gaussian centered at tau/tau_mid=0.9,
+# width 0.1. Times are code units. No vapor/ice mass conversion occurs.
+# start_equilibrium initializes the valid irradiation FV equilibrium once;
+# subsequent temperatures always follow the gas energy equation.
+thermal_test_start_equilibrium = false
+thermal_test_cooling_ratio = 0
+thermal_test_cooling_start = 0
+thermal_test_cooling_stop = 1
+thermal_test_cooling_radius_au = 2
+thermal_test_cooling_width_au = 0.25
+gm0 = 13213.18338
+GM = 13213.18338
+r0 = 23.64118024
+rho0 = 1
+T0 = 150
+pvalue = -2.25
+qvalue = -0.5
+kappa0 = 0.15
+f_vi = 2.5
+L_star = 3
+alpha_vis = 0.001
+nu_slope = 1
+kappa_aniso = 0
+beta = 500
+Isothermal_Flag = true
+Allow_T_change_Flag = true
+Damping_Flag = false
+Theta_Gas_Damping_Flag = false
+PhaseChange_Flag = false
+Relaxation_Flag = false
+mom_correct_Flag = false
+ACTIVE = false
+dust_start_injection = 1e30
+injection_Tsoft = 1
+t_iterate = 0
+
+<units>
+unit_system = custom
+mass_cgs = 2.3202009900e26
+length_cgs = 1.8983553591e12
+time_cgs = 2.6097389234e7
