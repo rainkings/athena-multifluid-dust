@@ -46,6 +46,8 @@ EquationOfState::EquationOfState(MeshBlock *pmb, ParameterInput *pin) :
   vsqr_unit_{egas_unit_/rho_unit_},
   inv_vsqr_unit_{1.0/vsqr_unit_}
   {
+  //[26.10.19]Zhixuan Li: find a small bug, the dustfluids_floor_ is a vector, we need to set all the elements to the same value
+  for (int n = 1; n < NDUSTGAS; ++n) dustfluids_floor_[n] = dustfluids_floor_[0];
   if (pin->DoesParameterExist("hydro", "efloor")) {
     energy_floor_ = pin->GetReal("hydro", "efloor");
     pressure_floor_ = energy_floor_*(pin->GetOrAddReal("hydro", "gamma", 2.) - 1.);

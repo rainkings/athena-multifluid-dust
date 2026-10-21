@@ -422,7 +422,21 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
         // Real v_frag_tot = Get_v_frag(v_frag(1), v_frag(0), rho_sil, rho_ice); // effective fragmentation velocity
         Real v_frag_tot = (v_frag(1)*rho_sil + v_frag(0)*rho_ice)/(rho_sil + rho_ice); // the fragmentation velocity for the current composition, using the composition as a proxy.
         Real St = SQR(v_frag_tot)/cs2/3.0/alpha_vis;
+
+        Real mu1 = 1.0/((1.0-fv)/mu_xy + fv/mu_z);  // Mean molecular weight
+        // Convert molecular properties to code units for mean free path calculation
+        // mu_cgs = mu1 * m_H [g], convert to code_mass
+        Units *punit = pmb->pmy_mesh->punit;
+        Real mu_code = mu1 * Constants::hydrogen_mass_cgs / punit->code_mass_cgs; // [code_mass]
+        Real sigma_mol_code = sigma_mol_cgs / SQR(punit->code_length_cgs); // [code_length^2]
+        Real l_mfp = mu_code/(std::sqrt(2)*rho_g*sigma_mol_code); // [code_length]
+
+        // first assume Epstein regime, then check if Stokes regime is needed
         Real s_max = St* rho_g * vth / (OmegaK * rho_inte_relax);
+        if (s_max > 2.25 * l_mfp) {
+          // Stokes regime
+          s_max = std::pow(2.25 * l_mfp * St * rho_g * vth / (OmegaK * rho_inte_relax), 0.5);
+        }
         Real m_max = FOUR_3RD * PI * SQR(s_max)*s_max * rho_inte_relax;
         mmax_array(k, j, i) = m_max;
 
@@ -515,22 +529,27 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
         }
 
         //5. Relaxation timescale (based on largest bin)
-        int largest_bin = N_P - 1;
-        Real t_stop = pmb->pdustfluids->stopping_time_array(largest_bin, k, j, i);
-        Real St1 = t_stop * OmegaK;
-        Real delV = std::sqrt(3.0 * alpha_vis * St1 * cs2);
-        // number density of largest bin (volumetric)
-        Real rho_Np_vol = cons_df(4 * (N_P*N_Z + 1 + largest_bin), k, j, i);
-        Real trelax = 1.0 / (4.0 * rho_Np_vol * PI * SQR(s_p_array(largest_bin)) * delV) * T_relax_prefactor;
+        // int largest_bin = N_P - 1;
+        // Real t_stop = pmb->pdustfluids->stopping_time_array(3, k, j, i);
+        // Real St1 = t_stop * OmegaK;
+        // Real delV = std::sqrt(3.0 * alpha_vis * St1 * cs2);
+        // // number density of largest bin (volumetric)
+        // Real rho_Np_vol = cons_df(4 * (N_P*N_Z + 1 + largest_bin), k, j, i);
+        // Real trelax = 1.0 / (4.0 * rho_Np_vol * PI * SQR(s_p_array(largest_bin)) * delV) * T_relax_prefactor;
 
         //[26.10.10]Zhixuan: Now we try to use the relaxed stae quantities to calculate the relaxation timescale. 
-        // Real m1_relax = M2_relax(N_P-1)/M1_relax(N_P-1); // the characteristic mass of the largest bin in the relaxed state
-        // Real s1_relax = std::pow(m1_relax/(FOUR_3RD*PI*rho_inte_relax), ONE_3RD);
-        //
-        // Real St1_relax = rho_inte_relax*s1_relax/(vth*rho_g)*OmegaK;
-        // Real delV_relax = std::sqrt(3.0 * alpha_vis * St1_relax * cs2);
-        // Real rho_Np_vol_relax = n_relax(N_P-1); // number density of largest bin (volumetric) in the relaxed state
-        // Real trelax = 1.0 / (4.0 * rho_Np_vol_relax * PI * SQR(s1_relax) * delV_relax) * T_relax_prefactor;
+        Real m1_relax = M2_relax(N_P-1)/M1_relax(N_P-1); // the characteristic mass of the largest bin in the relaxed state
+        Real s1_relax = std::pow(m1_relax/(FOUR_3RD*PI*rho_inte_relax), ONE_3RD);
+        Real St1_relax;
+
+        if (s1_relax > 2.25 * l_mfp) {
+          St1_relax = 4.0/9.0 * SQR(s1_relax) * rho_inte_relax / (l_mfp * rho_g * vth) * OmegaK;
+        } else {
+          St1_relax = rho_inte_relax*s1_relax/(vth*rho_g)*OmegaK;
+        }
+        Real delV_relax = std::sqrt(3.0 * alpha_vis * St1_relax * cs2);
+        Real rho_Np_vol_relax = n_relax(N_P-1); // number density of largest bin (volumetric) in the relaxed state
+        Real trelax = 1.0 / (4.0 * rho_Np_vol_relax * PI * SQR(s1_relax) * delV_relax) * T_relax_prefactor;
         //
         // int dk     = NGHOST;
         // int dj     = NGHOST;
