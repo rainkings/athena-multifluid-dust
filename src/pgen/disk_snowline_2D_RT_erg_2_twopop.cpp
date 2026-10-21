@@ -366,7 +366,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
 
   // global optical depth
   if(true){
-    AllocateRealUserMeshDataField(11);
+    AllocateRealUserMeshDataField(9);
     // 0:tau_vi, 1:tau_eff, 2:q_z, 3:q_int, 4:Tem_RT, 5:int_1, 6:int_2, 7:rho_z, 8:q_diff
     ruser_mesh_data[0].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
     ruser_mesh_data[1].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
@@ -377,6 +377,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
     ruser_mesh_data[6].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
     ruser_mesh_data[7].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
     ruser_mesh_data[8].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
+    // ruser_mesh_data[9].NewAthenaArray(1);
   }
 
   // print parameters
@@ -1855,7 +1856,7 @@ void MySource(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<
       for (int i=pmb->is; i<=pmb->ie; ++i) {
         for (int n=0; n<NDUSTFLUIDS; ++n) {
           Real &den = pmb->pdustfluids->df_u(4*n, k, j, i);
-          if (!(den > dffloor)) den = dffloor;      // 同时挡住 NaN
+          if (!(den > dffloor)) den = dffloor;  
         }
       }
     }
@@ -1939,7 +1940,7 @@ void MySource(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<
       for (int j=pmb->js; j<=pmb->je; ++j) {
 #pragma omp simd
         for (int i=pmb->is; i<=pmb->ie; ++i) {
-            rho_i(k,j,i) = cons_df(0,k,j,i) + cons_df(4,k,j,i); // ice for pebble size bin 0 
+            rho_i(k,j,i) = cons_df(4*6,k,j,i); // ice for pebble size bin 0 
             rho_i1(k,j,i) = cons_df(4*2,k,j,i) + cons_df(4*3,k,j,i); // ice for pebble size bin 1 
             rho_v(k,j,i) = cons_df(4*4,k,j,i); // vapor
           //
@@ -1963,7 +1964,7 @@ void MySource(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<
 #pragma omp simd
         for (int i=pmb->is; i<=pmb->ie; ++i) {
             pmb->user_out_var(UserOutVar::PhaseChangeBase() + UserOutVar::kDrhoIce0Dt, k, j, i)
-                = (cons_df(0,k,j,i)+cons_df(4,k,j,i) - rho_i(k,j,i)) / dt;
+                = (cons_df(4*6,k,j,i) - rho_i(k,j,i)) / dt;
             pmb->user_out_var(UserOutVar::PhaseChangeBase() + UserOutVar::kDrhoIce1Dt, k, j, i)
                 = (cons_df(4*2,k,j,i)+cons_df(4*3,k,j,i) - rho_i1(k,j,i)) / dt;
             pmb->user_out_var(UserOutVar::PhaseChangeBase() + UserOutVar::kDrhoVaporDt, k, j, i)
