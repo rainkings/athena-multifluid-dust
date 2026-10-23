@@ -529,27 +529,27 @@ void Relaxation::RelaxationSource(MeshBlock *pmb, const Real time, const Real dt
         }
 
         //5. Relaxation timescale (based on largest bin)
-        // int largest_bin = N_P - 1;
-        // Real t_stop = pmb->pdustfluids->stopping_time_array(3, k, j, i);
-        // Real St1 = t_stop * OmegaK;
-        // Real delV = std::sqrt(3.0 * alpha_vis * St1 * cs2);
-        // // number density of largest bin (volumetric)
-        // Real rho_Np_vol = cons_df(4 * (N_P*N_Z + 1 + largest_bin), k, j, i);
-        // Real trelax = 1.0 / (4.0 * rho_Np_vol * PI * SQR(s_p_array(largest_bin)) * delV) * T_relax_prefactor;
+        int largest_bin = N_P - 1;
+        Real t_stop = pmb->pdustfluids->stopping_time_array(3, k, j, i);
+        Real St1 = t_stop * OmegaK;
+        Real delV = std::sqrt(3.0 * alpha_vis * St1 * cs2);
+        // number density of largest bin (volumetric)
+        Real rho_Np_vol = cons_df(4 * (N_P*N_Z + 1 + largest_bin), k, j, i);
+        Real trelax = 1.0 / (4.0 * rho_Np_vol * PI * SQR(s_p_array(largest_bin)) * delV) * T_relax_prefactor;
 
         //[26.10.10]Zhixuan: Now we try to use the relaxed stae quantities to calculate the relaxation timescale. 
-        Real m1_relax = M2_relax(N_P-1)/M1_relax(N_P-1); // the characteristic mass of the largest bin in the relaxed state
-        Real s1_relax = std::pow(m1_relax/(FOUR_3RD*PI*rho_inte_relax), ONE_3RD);
-        Real St1_relax;
-
-        if (s1_relax > 2.25 * l_mfp) {
-          St1_relax = 4.0/9.0 * SQR(s1_relax) * rho_inte_relax / (l_mfp * rho_g * vth) * OmegaK;
-        } else {
-          St1_relax = rho_inte_relax*s1_relax/(vth*rho_g)*OmegaK;
-        }
-        Real delV_relax = std::sqrt(3.0 * alpha_vis * St1_relax * cs2);
-        Real rho_Np_vol_relax = n_relax(N_P-1); // number density of largest bin (volumetric) in the relaxed state
-        Real trelax = 1.0 / (4.0 * rho_Np_vol_relax * PI * SQR(s1_relax) * delV_relax) * T_relax_prefactor;
+        // Real m1_relax = M2_relax(N_P-1)/M1_relax(N_P-1); // the characteristic mass of the largest bin in the relaxed state
+        // Real s1_relax = std::pow(m1_relax/(FOUR_3RD*PI*rho_inte_relax), ONE_3RD);
+        // Real St1_relax;
+        //
+        // if (s1_relax > 2.25 * l_mfp) {
+        //   St1_relax = 4.0/9.0 * SQR(s1_relax) * rho_inte_relax / (l_mfp * rho_g * vth) * OmegaK;
+        // } else {
+        //   St1_relax = rho_inte_relax*s1_relax/(vth*rho_g)*OmegaK;
+        // }
+        // Real delV_relax = std::sqrt(3.0 * alpha_vis * St1_relax * cs2);
+        // Real rho_Np_vol_relax = n_relax(N_P-1); // number density of largest bin (volumetric) in the relaxed state
+        // Real trelax = 1.0 / (4.0 * rho_Np_vol_relax * PI * SQR(s1_relax) * delV_relax) * T_relax_prefactor;
         //
         // int dk     = NGHOST;
         // int dj     = NGHOST;

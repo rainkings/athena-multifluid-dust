@@ -3,9 +3,10 @@
 // update at fixed density and composition. Source accounting is deliberate:
 //   q_irr:    absorbed stellar irradiation, rebuilt here from current opacity;
 //   q_diff:   explicit radial conduction, recorded by the pgen's MySource;
-//   q_vis:    already in hydro energy, including orbital background-shear work;
+//   q_vis:    native hydro heat by default; optionally deferred to this solve,
+//             or removed entirely with problem/viscous_heating=false;
 //   q_latent: already paid by PhaseChange, retained here only for diagnostics.
-// Only q_irr+q_diff enter the additional material/radiation energy solve.
+// Only q_irr+q_diff and enabled deferred q_vis enter the extra thermal solve.
 #ifndef PGEN_SNOWLINE_THERMAL_ENERGY_HPP_
 #define PGEN_SNOWLINE_THERMAL_ENERGY_HPP_
 
@@ -19,6 +20,7 @@
 #endif
 
 #include "snowline_twostream.hpp"
+#include "snowline_viscous_heating.hpp"
 
 namespace SnowlineThermalEnergy {
 using SnowlineTwoStream::Column;
@@ -33,7 +35,8 @@ struct Evolution {
   // Scalar material quantities use Athena code units; temperatures are kelvin.
   enum GatheredField {
     kDensity, kVaporFraction, kCylindricalRadius, kPathLength, kGasInternalEnergy,
-    kIceHeatCapacity, kRadialSource, kLatentDiagnostic, kOwnershipCount, kFieldCount
+    kIceHeatCapacity, kRadialSource, kViscousSource, kLatentDiagnostic,
+    kOwnershipCount, kFieldCount
   };
   // Existing pgen mesh-array layout; keep it compatible with boundaries/output.
   enum MeshField {
@@ -42,6 +45,7 @@ struct Evolution {
   };
 
   bool enabled = false;
+  ViscousHeating viscous_heating;
   Scalar max_energy_defect = 0;
   int steps = 0;
   std::vector<Real> data;
@@ -69,6 +73,7 @@ struct Evolution {
           << "and thermal_test=false.\n";
       ATHENA_ERROR(msg);
     }
+    viscous_heating.Configure(pin, mesh);
   }
 
   // Called once after the full hydro timestep. Assemble complete theta columns,
@@ -119,6 +124,8 @@ struct Evolution {
             data[kLatentDiagnostic*count+g] = p->pphase_change->q_latent(k,j,i);
           }
           data[kRadialSource*count+g] = mesh->ruser_mesh_data[kRadialHeating](0,tj+NGHOST,ti);
+          if (viscous_heating.deferred && viscous_heating.enabled)
+            data[kViscousSource*count+g] = viscous_heating.rate[g];
           data[kOwnershipCount*count+g] = 1;
         }
       }
@@ -196,13 +203,17 @@ struct Evolution {
             *(std::exp(-coefficient*center)
               +std::exp(-coefficient*(2*total_tau-center)));
         const Scalar chi = data[kDensity*count+g]*opacity*(1-data[kVaporFraction*count+g]);
-        radiation_source[j] = c.source[j]+data[kRadialSource*count+g]/(chi*reference_flux);
+        // Deferred heat has been removed from hydro, so add it exactly once.
+        // A disabled heating flag leaves kViscousSource zero.
+        radiation_source[j] = c.source[j]
+            +(data[kRadialSource*count+g]+data[kViscousSource*count+g])
+              /(chi*reference_flux);
         tau += c.width[j];
         mesh->ruser_mesh_data[kOpticalDepth](0,j+NGHOST,i) = center;
       }
       c.Initialize(false);
-      // Hypothetical equilibrium of q_irr+q_diff+q_latent, for diagnostics only.
-      // q_vis is excluded here because it is already in hydro's incoming heat;
+      // Hypothetical equilibrium of the extra sources plus latent diagnostics.
+      // Native (nondeferred) q_vis is already in hydro's incoming heat;
       // this is not the complete old prescribed-viscosity equilibrium. Its sign
       // check can fail while a transient with stored material heat remains valid.
       c.net_heating = 0;
@@ -233,8 +244,8 @@ struct Evolution {
         integral += heating;
         weighted += c.width[j]*flux_center;
       }
-      // Restore the actual source before stepping: latent and viscous heat have
-      // already changed the incoming conserved energy and must not be added twice.
+      // Latent heat and nondeferred viscous heat are already in incoming energy.
+      // radiation_source includes viscous heat only when it was removed earlier.
       c.source = radiation_source;
       c.net_heating = 0;
       for (int j = 0; j < nt; ++j) c.net_heating += c.width[j]*c.source[j];
@@ -309,7 +320,7 @@ struct Evolution {
       }
     }
     ++steps;
-    if (Globals::my_rank == 0 && (steps <= 3 || steps%100 == 0)) {
+    if (Globals::my_rank == 0 && (steps <= 3 || steps%5000 == 0)) {
       std::cout << "[thermal_energy] cycle=" << mesh->ncycle+1
                 << " time=" << mesh->time+mesh->dt
                 << " Tmin=" << Real(min_temperature) << " Tmax=" << Real(max_temperature)

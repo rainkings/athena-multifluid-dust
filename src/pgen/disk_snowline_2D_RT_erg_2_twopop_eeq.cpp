@@ -38,6 +38,7 @@
 #include "../orbital_advection/orbital_advection.hpp"
 #include "../parameter_input.hpp"
 #include "../phase_change/phase_change.hpp"  // (Yu, 2025-11-16)
+#include "../phase_change/coupled_column_athena.hpp"
 #include "../phase_change/phase_change_constants.hpp"  // (Yu, 2025-11-16) For constants: KELVIN, P_eq0, L_heat, etc.
 #include "../units/units.hpp"  // (Yu, 2025-11-16) For Constants namespace
 #include "../relaxation/relaxation.hpp" //[26.04.29]Zhixuan 
@@ -98,6 +99,12 @@ Real M_dot_g, L_star; // M_sun/yr
 Real initial_D2G[NDUSTFLUIDS], Stokes_number[NDUSTFLUIDS], Hratio[NDUSTFLUIDS], weight_dust[NDUSTFLUIDS], p2g_flux[NDUSTFLUIDS];
 bool mom_correct_Flag, Isothermal_Flag, Damping_Flag, Theta_Gas_Damping_Flag ,Allow_T_change_Flag, Relaxation_Flag;
 bool PhaseChange_Flag, ACTIVE;
+
+// Opt-in column model. The old energy / source path remains unchanged when
+// this is false. All physical constants are copied into thread-read-only settings.
+bool coupled_column_mode = false;
+coupled_column::Settings column_settings;
+Real ColumnRestartTimeStep(MeshBlock *pmb);
 
 
 Real x1min, x1max, x2min, x2max;
@@ -242,6 +249,38 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   beta = pin->GetReal("problem", "beta");
   f_vi = pin->GetOrAddReal("problem", "f_vi", 1.0);
 
+  coupled_column_mode = pin->GetOrAddBoolean("problem", "coupled_column", false);
+  if (coupled_column_mode) {
+    if (Globals::nranks != 1 || multilevel || mesh_size.nx3 != 1
+        || mesh_size.nx2 <= 1 || N_Z != 2 || N_P < 1
+        || std::strcmp(COORDINATE_SYSTEM, "spherical_polar") != 0
+        || MAGNETIC_FIELDS_ENABLED || STS_ENABLED
+        || std::abs(mesh_size.x2max-PI/2.0) > 1.e-6) {
+      throw std::runtime_error("coupled_column requires one MPI rank, a 2D root "
+          "spherical hydro mesh ending at the midplane, N_Z=2 and no STS");
+    }
+    if (pin->GetOrAddBoolean("problem", "thermal_energy", false)
+        || !Allow_T_change_Flag) {
+      throw std::runtime_error("coupled_column requires thermal_energy=false and "
+                               "Allow_T_change_Flag=true");
+    }
+    column_settings.tolerance = pin->GetOrAddReal("problem", "column_tol", 1.e-7);
+    column_settings.max_iterations = pin->GetOrAddInteger("problem", "column_max_iter", 40);
+    column_settings.source_floor = pin->GetOrAddReal("dust", "source_floor",
+        100.0*pin->GetOrAddReal("dust", "dffloor", 1.e-10));
+    column_settings.ice_density = pin->GetOrAddReal("problem", "rho_ice_inter", 1.0)
+        /punit->code_density_cgs;
+    column_settings.refractory_density = pin->GetOrAddReal("problem", "rho_sil_inter", 3.0)
+        /punit->code_density_cgs;
+    column_settings.latent_heat = L_heat_cgs/SQR(punit->code_velocity_cgs);
+    column_settings.equilibrium_pressure = P_eq0_cgs/punit->code_pressure_cgs;
+    column_settings.sigma = Constants::sigma_cgs
+        /(punit->code_energydensity_cgs*punit->code_velocity_cgs);
+    column_settings.stellar_luminosity = pin->GetOrAddReal("problem", "L_star", 1.0)
+        *Constants::solar_lum_cgs
+        /(punit->code_energydensity_cgs*punit->code_volume_cgs/punit->code_time_cgs);
+  }
+
   damping_ratio = pin->GetOrAddReal("problem", "damping_ratio", 0.4);
 
   v_frag.NewAthenaArray(N_Z);
@@ -337,6 +376,11 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
 
   // Enroll local isothermal equation of state
   EnrollUserExplicitSourceFunction(MySource);
+  if (coupled_column_mode) {
+    // The existing timestep callback runs after restart data and primitives
+    // are available. It initializes stored T; it adds NO timestep constraint.
+    EnrollUserTimeStepFunction(ColumnRestartTimeStep);
+  }
   // Enroll dust settings
   if (NDUSTFLUIDS > 0) {
     // Enroll user-defined dust stopping time
@@ -459,7 +503,17 @@ void MeshBlock::InitUserMeshBlockData(ParameterInput *pin){
           int tj = static_cast<int>(loc.lx2)*block_size.nx2+(j-jl);
           int tk = static_cast<int>(loc.lx3)*block_size.nx3+(k-ks);
 
-          phydro->Tem(k, j, i) = pmy_mesh->ruser_mesh_data[4](tk,tj,ti);
+          if (coupled_column_mode) {
+            // The global cache stores active column rows. Physical ghost
+            // temperatures are subsequently supplied by the normal user BCs.
+            // Do not read beyond that cache while constructing a block.
+            const AthenaArray<Real> &cache = pmy_mesh->ruser_mesh_data[4];
+            const int cached_i = std::max(0, std::min(ti, cache.GetDim1()-1));
+            const int cached_j = std::max(0, std::min(tj, cache.GetDim2()-1));
+            phydro->Tem(k,j,i) = cache(tk,cached_j,cached_i);
+          } else {
+            phydro->Tem(k, j, i) = pmy_mesh->ruser_mesh_data[4](tk,tj,ti);
+          }
         }
       }
     }
@@ -772,6 +826,36 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
 }
 
 void Mesh::UserWorkInLoop() {
+  if (coupled_column_mode && time >= t_iterate) {
+    coupled_column::Settings settings = column_settings;
+    settings.dt = dt;
+    settings.beta = beta;
+    settings.gm = gm0;
+    settings.r0 = r0;
+    settings.temperature_slope = qvalue;
+    settings.kappa0 = kappa0;
+    settings.visible_opacity_ratio = f_vi;
+    settings.phase_change = PhaseChange_Flag;
+    settings.viscous_heating = ACTIVE;
+
+    // Keep the output layout in the pgen, where its meaning is defined.
+    coupled_column::OutputIndices output;
+    output.temperature = UserOutVar::GasBase()+UserOutVar::kGasTemperature;
+    output.latent = UserOutVar::GasBase()+UserOutVar::kGasLatentHeating;
+    output.radiative = UserOutVar::GasBase()+UserOutVar::kGasRadiativeHeating;
+    output.diffusive = UserOutVar::GasBase()+UserOutVar::kGasDiffusiveHeating;
+    output.cooling = UserOutVar::GasBase()+UserOutVar::kGasCoolingTime;
+    output.integrated = UserOutVar::GasBase()+UserOutVar::kGasIntegratedHeating;
+    output.drho_vapor = UserOutVar::PhaseChangeBase()+UserOutVar::kDrhoVaporDt;
+    output.drho_ice0 = UserOutVar::PhaseChangeBase()+UserOutVar::kDrhoIce0Dt;
+    output.drho_ice1 = UserOutVar::PhaseChangeBase()+UserOutVar::kDrhoIce1Dt;
+    for (int p = 0; p < N_P; ++p) {
+      output.particle_mass.push_back(UserOutVar::DustBase(p)+UserOutVar::kDustMass);
+      output.particle_size.push_back(UserOutVar::DustBase(p)+UserOutVar::kDustSize);
+    }
+    coupled_column::AdvanceColumns(this, settings, output);
+    return;  // The solver owns caches and diagnostic resets in this mode.
+  }
   // some constants
   Real Mdot_gas = -M_dot_g* Constants::solar_mass_cgs/ Constants::yr_cgs / 2.0; // in cgs
   Mdot_gas /= (punit->code_mass_cgs /punit->code_time_cgs);
@@ -1469,7 +1553,9 @@ void MeshBlock::UserWorkInLoop(){
 
         // Recover temperature from conserved energy in active cells after
         // preparation, and in ghost cells throughout the run.
-        if(time >= t_iterate || i < is || i > ie || j < js || j > je){
+        const bool active_cell = i >= is && i <= ie && j >= js && j <= je;
+        if ((!coupled_column_mode || !active_cell)
+            && (time >= t_iterate || !active_cell)) {
           const Real rho = phydro->u(IDN,k,j,i);
           const Real kinetic = 0.5*(SQR(phydro->u(IM1,k,j,i))
                                  + SQR(phydro->u(IM2,k,j,i))
@@ -1749,6 +1835,10 @@ void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin){
         int tj = static_cast<int>(loc.lx2)*block_size.nx2+(j-jl);
         int tk = static_cast<int>(loc.lx3)*block_size.nx3+(k-kl);
 
+        // Coupled-column diagnostics are written after the column commit,
+        // with global ACTIVE-cell indices, by the mesh-level adapter.
+        if (coupled_column_mode) continue;
+
         // radiative heating rate, q_z
         user_out_var(UserOutVar::GasBase() + UserOutVar::kGasIntegratedHeating, k, j, i)
           = pmy_mesh->ruser_mesh_data[3](tk, tj, ti);
@@ -1769,6 +1859,15 @@ Real Get_mu(Real fv){
   return 1./((1.-fv)/mu_xy + fv / mu_z);
 }
 
+Real ColumnRestartTimeStep(MeshBlock *pmb) {
+  if (pmb->pmy_mesh->time == t_restart) {
+    // The adapter initializes each block once. Later calls in this first
+    // timestep must not recover the temperature from newly evolved hydro E.
+    coupled_column::ReadRestartTemperature(pmb, t_restart > 0.0);
+  }
+  return std::numeric_limits<Real>::max();
+}
+
 void MySource(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<Real> &prim,
     const AthenaArray<Real> &prim_df, const AthenaArray<Real> &prim_s, const AthenaArray<Real> &bcc,
     AthenaArray<Real> &cons, AthenaArray<Real> &cons_df, AthenaArray<Real> &cons_s){
@@ -1785,12 +1884,20 @@ void MySource(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<
     }
   }
 
-  RadiativeCondution(pmb, time, dt, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s);
+  if (coupled_column_mode && time >= t_iterate) {
+    // Stored T is authoritative. This changes energy only, retaining the
+    // hydro density and velocity (unlike the preparation-stage EOS reset).
+    coupled_column::RestoreStoredTemperature(pmb, cons, cons_df);
+  }
+  if (!coupled_column_mode || pmb->phydro->hdif.kappa_aniso > 0.0
+      || pmb->phydro->hdif.kappa_iso > 0.0) {
+    RadiativeCondution(pmb, time, dt, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s);
+  }
   // [26.10.19]Zhixuan: only overwrite the gas properties during initial iteration
   if (time<t_iterate){
     LocalIsothermalEOS(pmb, time, dt, prim, prim_df, prim_s, bcc, cons, cons_df, cons_s);
   }
-  if(N_Z > 1 and time > t_iterate and PhaseChange_Flag){  // (Yu, 2025-11-16)
+  if(!coupled_column_mode && N_Z > 1 and time > t_iterate and PhaseChange_Flag){
     // Record the density of ices before phase change 
     // AthenaArray<Real> rho_i, rho_i1, rho_v;
     // int si, sj, sk; 
@@ -1883,7 +1990,13 @@ void MySource(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<
         }
       }
   }
-  IrradiationSource( pmb, time, dt, prim, prim_df, cons, T0, qvalue);
+  if (coupled_column_mode && time >= t_iterate) {
+    // Relaxation may change composition. Rebuild energy at the SAME stored T;
+    // phase change and radiative relaxation run once, later, for whole columns.
+    coupled_column::RestoreStoredTemperature(pmb, cons, cons_df);
+  } else if (!coupled_column_mode) {
+    IrradiationSource(pmb, time, dt, prim, prim_df, cons, T0, qvalue);
+  }
 
   return;
 }

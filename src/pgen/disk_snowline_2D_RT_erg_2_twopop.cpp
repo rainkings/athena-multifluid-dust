@@ -366,7 +366,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
 
   // global optical depth
   if(true){
-    AllocateRealUserMeshDataField(9);
+    AllocateRealUserMeshDataField(11);
     // 0:tau_vi, 1:tau_eff, 2:q_z, 3:q_int, 4:Tem_RT, 5:int_1, 6:int_2, 7:rho_z, 8:q_diff
     ruser_mesh_data[0].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
     ruser_mesh_data[1].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
@@ -377,7 +377,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
     ruser_mesh_data[6].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
     ruser_mesh_data[7].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
     ruser_mesh_data[8].NewAthenaArray(mesh_size.nx3, mesh_size.nx2+NGHOST, mesh_size.nx1 + 2*NGHOST);
-    // ruser_mesh_data[9].NewAthenaArray(1);
+    ruser_mesh_data[9].NewAthenaArray(1);
   }
 
   // print parameters
@@ -994,7 +994,7 @@ void Mesh::UserWorkInLoop() {
                 q_int_f(tk,tj+1,ti) = q_z(tk,tj,ti)*dx2 + q_int_f(tk,tj,ti);
                 q_int(tk,tj,ti) = 0.5*(q_int_f(tk,tj+1,ti) + q_int_f(tk,tj,ti));
 
-                // if (ti ==42 && tj ==48){
+                // if (ti ==36 && tj ==49){
                 //   std::cout << "======================================" << std::endl;
                 //   std::cout <<"tj, ti = " << tj <<','<<ti<< std::endl;
                 //   std::cout << "q_z = " << q_z(tk,tj,ti) << std::endl;
@@ -1147,6 +1147,7 @@ void Mesh::UserWorkInLoop() {
                   std::cout << "ti, tj = " << ti << " " << tj << std::endl;
                   std::cout << "tau_eff = " << tau_eff(tk,tj,ti) << std::endl;
                   std::cout << "q_z = " << q_z(tk,tj,ti) << std::endl;
+                  std::cout << "q_latent = " << pmb->pphase_change->q_latent(k,j,i) << std::endl;
                   std::cout << "cycle, time = " << ncycle+1 << ' '
                             << std::setprecision(17) << time+dt << std::endl;
                   quick_exit(1);
@@ -1863,6 +1864,15 @@ void MySource(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<
   }
 
   if (thermal_energy.enabled) {
+  // Remove viscous heat before temperature recovery and phase change.
+  thermal_energy.viscous_heating.RemoveFromHydro(pmb, dt, prim, cons);
+
+  // Existing temperature-recovery loop follows...
+  }
+
+  if (thermal_energy.enabled) {
+    // Remove native dissipation before T recovery and phase change. The column
+    // thermal step restores it only when viscous_heating is enabled.
     // Hydro evolves internal energy in this mode. Refresh the temperature
     // used by the explicit radial-conduction source from that conserved state.
     for (int k=pmb->ks; k<=pmb->ke; ++k) {

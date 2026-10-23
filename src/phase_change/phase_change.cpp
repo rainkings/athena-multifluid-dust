@@ -588,7 +588,7 @@ const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_df,
             ATHENA_ERROR(msg);
           }
         } else {
-          q_latent(k,j,i) += -(rho_v-rho_v0)/(pmb->pmy_mesh->dt)*L_heat;
+          q_latent(k,j,i) = -(rho_v-rho_v0)/(pmb->pmy_mesh->dt)*L_heat;
         }
         // std::cout << "At (i,j,k)=(" << i << "," << j << "," << k << "):" << std::endl
         //   << "q_latent = " << q_latent(k,j,i) << std::endl;
